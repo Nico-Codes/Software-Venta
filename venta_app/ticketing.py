@@ -54,10 +54,18 @@ def build_ticket_text(
         lines.append(_center(f"Tel: {store_phone}", width))
 
     lines.append("-" * width)
-    lines.append(_fit(f"Ticket: {sale['id']}", width))
+    ticket_id = sale.get("id") or sale.get("sale_id") or "-"
+    lines.append(_fit(f"Ticket: {ticket_id}", width))
     lines.append(_fit(f"Fecha : {sale['sold_at']}", width))
     lines.append(_fit(f"Emitido: {now_label}", width))
     lines.append(_fit(f"Pago  : {sale['payment_method']}", width))
+    sale_type = str(sale.get("sale_type") or "cash")
+    lines.append(_fit(f"Modo  : {'Deuda' if sale_type == 'credit' else 'Contado'}", width))
+    if sale.get("customer_name"):
+        lines.append(_fit(f"Cliente: {sale['customer_name']}", width))
+    if float(sale.get("balance_due", 0)) > 0:
+        lines.append(_fit(f"Pagado: {_format_money(float(sale.get('paid_amount', 0)))}", width))
+        lines.append(_fit(f"Saldo : {_format_money(float(sale.get('balance_due', 0)))}", width))
     lines.append("-" * width)
 
     for item in items:

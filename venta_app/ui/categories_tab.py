@@ -129,6 +129,23 @@ class CategoriesTab(QWidget):
         self.save_ticket_btn.clicked.connect(self.save_ticket_config)
         form_layout.addWidget(self.save_ticket_btn)
 
+        form_layout.addSpacing(14)
+
+        debt_title = QLabel("Alertas de deuda")
+        debt_title.setObjectName("sectionTitle")
+        form_layout.addWidget(debt_title)
+
+        debt_form = QFormLayout()
+        self.debt_global_limit_input = QDoubleSpinBox()
+        self.debt_global_limit_input.setRange(0, 9_999_999)
+        self.debt_global_limit_input.setDecimals(2)
+        debt_form.addRow("Limite global", self.debt_global_limit_input)
+        form_layout.addLayout(debt_form)
+
+        self.save_debt_btn = QPushButton("Guardar limite deuda")
+        self.save_debt_btn.clicked.connect(self.save_debt_settings)
+        form_layout.addWidget(self.save_debt_btn)
+
         form_layout.addStretch(1)
 
         body.addWidget(form_frame, stretch=2)
@@ -152,6 +169,7 @@ class CategoriesTab(QWidget):
         self.store_address_input.setText(ticket_config["store_address"])
         self.store_phone_input.setText(ticket_config["store_phone"])
         self.ticket_footer_input.setText(ticket_config["ticket_footer"])
+        self.debt_global_limit_input.setValue(self.service.get_debt_global_alert_limit())
 
     def new_category(self) -> None:
         self.current_category_id = None
@@ -242,3 +260,14 @@ class CategoriesTab(QWidget):
         if self.on_data_changed:
             self.on_data_changed()
         QMessageBox.information(self, "Guardado", "Configuracion de ticket actualizada")
+
+    def save_debt_settings(self) -> None:
+        try:
+            self.service.set_debt_global_alert_limit(float(self.debt_global_limit_input.value()))
+        except ValidationError as exc:
+            QMessageBox.warning(self, "No se pudo guardar", str(exc))
+            return
+
+        if self.on_data_changed:
+            self.on_data_changed()
+        QMessageBox.information(self, "Guardado", "Limite global de deuda actualizado")

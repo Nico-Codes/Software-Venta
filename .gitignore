@@ -1,4 +1,9 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 data/
 .venv/
+.tools/
+venta_tauri/node_modules/
+venta_tauri/dist/
+venta_tauri/src-tauri/target/
+venta_tauri/src-tauri/gen/

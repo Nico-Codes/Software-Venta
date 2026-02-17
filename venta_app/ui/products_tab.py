@@ -200,8 +200,8 @@ class ProductsTab(QWidget):
         self.cost_input.setValue(0)
         self.sale_price_input.setValue(0)
         self.auto_price_check.setChecked(True)
-        self.stock_input.setValue(0)
-        self.min_stock_input.setValue(0)
+        self.stock_input.setValue(1)
+        self.min_stock_input.setValue(1)
         self.active_check.setChecked(True)
         self.on_auto_fields_changed()
 
@@ -266,13 +266,20 @@ class ProductsTab(QWidget):
             QMessageBox.warning(self, "Sin categorias", "Debes crear al menos una categoria")
             return
 
+        stock_value = float(self.stock_input.value())
+        if self.current_product_id is None and stock_value <= 0:
+            QMessageBox.warning(self, "Stock invalido", "Para crear un producto el stock inicial debe ser mayor a cero")
+            self.stock_input.setFocus()
+            self.stock_input.selectAll()
+            return
+
         kwargs = {
             "name": self.name_input.text(),
             "barcode": self.barcode_input.text(),
             "category_id": int(payload["id"]),
             "cost": float(self.cost_input.value()),
             "sale_price": float(self.sale_price_input.value()),
-            "stock": float(self.stock_input.value()),
+            "stock": stock_value,
             "min_stock": float(self.min_stock_input.value()),
             "auto_price": bool(self.auto_price_check.isChecked()),
         }
