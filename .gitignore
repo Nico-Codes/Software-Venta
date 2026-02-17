@@ -1,8 +1,20 @@
+# Python caches
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+
+# Local data / env
 data/
 .venv/
 .tools/
+
+# Build artifacts (legacy Python)
+build/
+build_*/
+dist/
+dist_*/
+
+# Build artifacts (Tauri)
 venta_tauri/node_modules/
 venta_tauri/dist/
 venta_tauri/src-tauri/target/

@@ -3,8 +3,8 @@ from __future__ import annotations
 import base64
 import tempfile
 from pathlib import Path
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -535,6 +535,7 @@ class MainWindow(QMainWindow):
         self.current_user = current_user
         self.is_admin = self.current_user["role"] == "admin"
         self.current_page_key = ""
+        self._startup_geometry_applied = False
 
         self.setWindowTitle("Venta Local - Almacen/Vinoteca")
         self.resize(1500, 900)
@@ -748,3 +749,30 @@ class MainWindow(QMainWindow):
         if self.backup_tab:
             self.backup_tab.refresh()
         apply_button_effects(self)
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._startup_geometry_applied:
+            return
+        self._startup_geometry_applied = True
+        # Let the window manager attach the window first, then fit to available desktop area.
+        QTimer.singleShot(0, self._fit_to_screen)
+
+    def _fit_to_screen(self) -> None:
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+        target_width = min(1500, max(1040, int(available.width() * 0.97)))
+        target_height = min(900, max(620, int(available.height() * 0.94)))
+
+        # On notebook-sized displays, maximize to avoid hidden bottom content.
+        if available.width() <= 1366 or available.height() <= 820:
+            self.showMaximized()
+            return
+
+        self.resize(target_width, target_height)
+        frame = self.frameGeometry()
+        frame.moveCenter(available.center())
+        self.move(frame.topLeft())
