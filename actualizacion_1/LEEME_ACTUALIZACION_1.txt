@@ -1,0 +1,12 @@
+﻿ALTO TRAGO - ACTUALIZACION 1
+
+Copia esta carpeta completa al pendrive.
+
+Contenido:
+- venta_app/ui/main_window.py
+- scripts/actualizar_linux.sh
+- scripts/ACTUALIZAR_LINUX.txt
+
+En Linux (equipo destino):
+1) Copia main_window.py al proyecto local.
+2) O ejecuta scripts/actualizar_linux.sh para backup + parche automatico.

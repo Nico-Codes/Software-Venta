@@ -1,0 +1,53 @@
+ALTO TRAGO - Actualizacion rapida en Linux
+
+Escenario:
+- Proyecto instalado en disco local: ~/Downloads/Software Venta
+- Parche en pendrive: /media/$USER/Ventoy/Software Venta/actualizacion_1
+
+1) Dar permisos al script en pendrive:
+chmod +x "/media/$USER/Ventoy/Software Venta/actualizacion_1/scripts/actualizar_linux.sh"
+
+2) Ejecutar actualizacion (backup + parche + validacion + abrir app):
+bash "/media/$USER/Ventoy/Software Venta/actualizacion_1/scripts/actualizar_linux.sh" \
+  --project-dir "$HOME/Downloads/Software Venta" \
+  --patch-file "/media/$USER/Ventoy/Software Venta/actualizacion_1/venta_app/ui/main_window.py"
+
+3) Si quieres recompilar el ejecutable Linux:
+bash "/media/$USER/Ventoy/Software Venta/actualizacion_1/scripts/actualizar_linux.sh" \
+  --project-dir "$HOME/Downloads/Software Venta" \
+  --patch-file "/media/$USER/Ventoy/Software Venta/actualizacion_1/venta_app/ui/main_window.py" \
+  --rebuild --no-run
+
+4) Crear o actualizar acceso directo en el menu:
+bash "/media/$USER/Ventoy/Software Venta/actualizacion_1/scripts/actualizar_linux.sh" \
+  --project-dir "$HOME/Downloads/Software Venta" \
+  --patch-file "/media/$USER/Ventoy/Software Venta/actualizacion_1/venta_app/ui/main_window.py" \
+  --shortcut --no-run
+
+5) Si no aparece en el menu, instalar tambien acceso directo global:
+bash "/media/$USER/Ventoy/Software Venta/actualizacion_1/scripts/actualizar_linux.sh" \
+  --project-dir "$HOME/Downloads/Software Venta" \
+  --patch-file "/media/$USER/Ventoy/Software Venta/actualizacion_1/venta_app/ui/main_window.py" \
+  --shortcut-global --no-run
+
+6) Crear icono directo en el escritorio (Desktop/Escritorio):
+bash "/media/$USER/Ventoy/Software Venta/actualizacion_1/scripts/actualizar_linux.sh" \
+  --project-dir "$HOME/Downloads/Software Venta" \
+  --patch-file "/media/$USER/Ventoy/Software Venta/actualizacion_1/venta_app/ui/main_window.py" \
+  --desktop-icon --no-run
+
+El script hace:
+- Cierra la app.
+- Hace backup de data y tickets en ~/alto-trago-backups
+- Aplica el parche a venta_app/ui/main_window.py
+- Valida sintaxis con py_compile
+- Opcional: recompila binario Linux
+- Opcional: crea/actualiza acceso directo en ~/.local/share/applications/alto-trago.desktop
+- Refresca menu con update-desktop-database, xdg-desktop-menu forceupdate, limpia ~/.cache/menus y reinicia xfce4-panel
+- Opcional: copia acceso directo a /usr/share/applications (requiere sudo)
+- Opcional: crea icono directo en ~/Desktop o ~/Escritorio
+
+Si aun no aparece en el menu:
+1) Cerrar sesion e iniciar sesion nuevamente.
+2) Probar lanzamiento directo:
+   gtk-launch alto-trago

@@ -1,0 +1,15 @@
+﻿ALTO TRAGO - ACTUALIZACION_4
+
+Esta carpeta se copia completa al pendrive.
+
+Archivos incluidos:
+- scripts/actualizar_linux.sh
+- scripts/ACTUALIZAR_LINUX.txt
+- venta_app/ui/main_window.py
+
+Uso recomendado en Linux:
+chmod +x "/media/$USER/Ventoy/Software Venta/actualizacion_4/scripts/actualizar_linux.sh"
+
+bash "/media/$USER/Ventoy/Software Venta/actualizacion_4/scripts/actualizar_linux.sh" \
+  --project-dir "$HOME/Downloads/Software Venta" \
+  --update-root "/media/$USER/Ventoy/Software Venta/actualizacion_4"

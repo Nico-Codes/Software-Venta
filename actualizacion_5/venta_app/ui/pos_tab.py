@@ -185,6 +185,8 @@ class POSTab(QWidget):
 
         footer_top_row = QHBoxLayout()
         footer_top_row.setSpacing(10)
+        footer_bottom_row = QHBoxLayout()
+        footer_bottom_row.setSpacing(8)
 
         total_title = QLabel("TOTAL")
         total_title.setObjectName("totalTitle")
@@ -207,7 +209,7 @@ class POSTab(QWidget):
         self.paid_amount_input = QDoubleSpinBox()
         self.paid_amount_input.setRange(0, 9_999_999)
         self.paid_amount_input.setDecimals(2)
-        self.paid_amount_input.setPrefix("$ ")
+        self.paid_amount_input.setPrefix("Abona ahora ")
         self.paid_amount_input.setMinimumWidth(170)
         self.paid_amount_input.valueChanged.connect(self.on_partial_amount_changed)
 
@@ -217,10 +219,11 @@ class POSTab(QWidget):
         self.partial_panel = QWidget()
         self.partial_panel_layout = QHBoxLayout(self.partial_panel)
         self.partial_panel_layout.setContentsMargins(0, 0, 0, 0)
-        self.partial_panel_layout.setSpacing(6)
-        self.partial_panel_layout.addWidget(QLabel("Abona"))
+        self.partial_panel_layout.setSpacing(8)
+        self.partial_panel_layout.addWidget(QLabel("Monto pagado"))
         self.partial_panel_layout.addWidget(self.paid_amount_input)
         self.partial_panel_layout.addWidget(self.debt_preview_label)
+        self.partial_panel_layout.addStretch(1)
         self.partial_panel.setVisible(False)
 
         self.charge_btn = QPushButton("Cobrar")
@@ -242,15 +245,16 @@ class POSTab(QWidget):
         payment_row.addWidget(payment_label)
         payment_row.addWidget(self.payment_combo)
         payment_row.addWidget(self.partial_toggle_btn)
-        payment_row.addWidget(self.partial_panel)
         payment_row.addStretch(1)
         checkout_block.addLayout(payment_row)
         checkout_block.addWidget(self.charge_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
         footer_top_row.addLayout(total_block, stretch=1)
         footer_top_row.addLayout(checkout_block, stretch=2)
+        footer_bottom_row.addWidget(self.partial_panel, stretch=1)
 
         footer_layout.addLayout(footer_top_row)
+        footer_layout.addLayout(footer_bottom_row)
 
         cart_panel.addWidget(footer)
 
@@ -316,8 +320,7 @@ class POSTab(QWidget):
         self.customer_combo.setMinimumHeight(32)
         self.payment_combo.setMinimumHeight(32)
         self.partial_toggle_btn.setMinimumHeight(32)
-        self.paid_amount_input.setMinimumWidth(120)
-        self.paid_amount_input.setMaximumWidth(140)
+        self.paid_amount_input.setMinimumWidth(140)
         self.charge_btn.setMinimumWidth(140)
         self.remove_btn.setMinimumHeight(30)
         self.clear_btn.setMinimumHeight(30)

@@ -713,7 +713,7 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(widget)
         page_layout.addWidget(scroll)
         self.page_map[key] = page
@@ -784,8 +784,8 @@ class MainWindow(QMainWindow):
         target_width = min(1500, max(1040, int(available.width() * 0.97)))
         target_height = min(900, max(620, int(available.height() * 0.94)))
 
-        # On notebook-sized displays or scaled desktops, compact + maximize.
-        if available.width() <= 1400 or available.height() <= 920:
+        # On notebook-sized displays, maximize to avoid hidden bottom content.
+        if available.width() <= 1366 or available.height() <= 820:
             self._enable_compact_mode()
             self.showMaximized()
             return
@@ -807,6 +807,3 @@ class MainWindow(QMainWindow):
         self._shell_layout.setSpacing(8)
         self.nav.setMinimumWidth(208)
         self._header_subtitle.setVisible(False)
-        self.pos_tab.enable_compact_mode()
-        if self.inventory_tab:
-            self.inventory_tab.enable_compact_mode()

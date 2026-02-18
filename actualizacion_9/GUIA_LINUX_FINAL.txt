@@ -1,0 +1,45 @@
+﻿ALTO TRAGO - GUIA FINAL LINUX (TAURI/REACT)
+
+Ubicacion esperada:
+- Proyecto local: $HOME/Downloads/Software Venta
+- Actualizacion en pendrive: /media/usuario/Ventoy/Software Venta/actualizacion_9
+
+1) Instalar dependencias (una sola vez)
+sudo apt update
+sudo apt install -y build-essential curl wget file libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf nodejs npm
+
+2) Instalar Rust si falta
+if ! command -v cargo >/dev/null 2>&1; then
+  curl https://sh.rustup.rs -sSf | sh -s -- -y
+fi
+source "$HOME/.cargo/env"
+
+3) Limpiar accesos viejos (evita que siga abriendo Python)
+rm -f "$HOME/.local/share/applications/alto-trago.desktop"
+rm -f "$HOME/Desktop/ALTO TRAGO.desktop"
+rm -f "$HOME/Escritorio/ALTO TRAGO.desktop"
+
+4) Ejecutar actualizacion forzando UI Tauri
+chmod +x "/media/usuario/Ventoy/Software Venta/actualizacion_9/scripts/actualizar_linux.sh"
+
+bash "/media/usuario/Ventoy/Software Venta/actualizacion_9/scripts/actualizar_linux.sh" \
+  --project-dir "$HOME/Downloads/Software Venta" \
+  --update-root "/media/usuario/Ventoy/Software Venta/actualizacion_9" \
+  --ui tauri --rebuild --shortcut --shortcut-global --desktop-icon --no-run
+
+5) Verificar launcher (NO debe decir python)
+grep '^Exec=' "$HOME/.local/share/applications/alto-trago.desktop"
+
+Debe mostrar VENTA_DB_PATH= y ruta a:
+.../venta_tauri/src-tauri/target/release/...
+
+6) Abrir app
+gtk-launch alto-trago
+
+7) Si no aparece en menu
+- Cerrar sesion y volver a iniciar.
+- O lanzar directo con gtk-launch alto-trago.
+
+Notas:
+- Tus datos no se pierden: Tauri usa la misma base local data/venta_local.db.
+- Backups automaticos quedan en: $HOME/alto-trago-backups

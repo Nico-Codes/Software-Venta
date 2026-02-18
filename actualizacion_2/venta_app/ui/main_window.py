@@ -10,8 +10,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QScrollArea,
-    QSizePolicy,
     QStackedWidget,
     QStyle,
     QTreeWidget,
@@ -21,10 +19,6 @@ from PySide6.QtWidgets import (
 )
 
 from ..services import WarehouseService
-try:
-    from ..version import APP_VERSION
-except Exception:
-    APP_VERSION = "1.0.0"
 from .backup_tab import BackupTab
 from .categories_tab import CategoriesTab
 from .customers_tab import CustomersTab
@@ -542,9 +536,8 @@ class MainWindow(QMainWindow):
         self.is_admin = self.current_user["role"] == "admin"
         self.current_page_key = ""
         self._startup_geometry_applied = False
-        self._compact_mode_enabled = False
 
-        self.setWindowTitle(f"Venta Local v{APP_VERSION} - Almacen/Vinoteca")
+        self.setWindowTitle("Venta Local - Almacen/Vinoteca")
         self.resize(1500, 900)
         self.setStyleSheet(APP_STYLE)
 
@@ -552,20 +545,17 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(container)
         root.setContentsMargins(16, 14, 16, 16)
         root.setSpacing(10)
-        self._root_layout = root
 
         header_card = QFrame()
         header_card.setObjectName("headerPanel")
         header = QHBoxLayout(header_card)
         header.setContentsMargins(14, 11, 14, 11)
-        self._header_layout = header
 
         title_box = QVBoxLayout()
         title = QLabel("Sistema de Gestion para Almacen / Vinoteca")
         title.setObjectName("appTitle")
-        subtitle = QLabel(f"Local, offline, optimizado para mostrador y control de deudas | Version {APP_VERSION}")
+        subtitle = QLabel("Local, offline, optimizado para mostrador y control de deudas")
         subtitle.setObjectName("appSubtitle")
-        self._header_subtitle = subtitle
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
 
@@ -583,7 +573,6 @@ class MainWindow(QMainWindow):
         content = QHBoxLayout(shell)
         content.setContentsMargins(10, 10, 10, 10)
         content.setSpacing(10)
-        self._shell_layout = content
 
         self.nav = QTreeWidget()
         self.nav.setObjectName("sideNav")
@@ -709,13 +698,7 @@ class MainWindow(QMainWindow):
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(8, 8, 8, 8)
         page_layout.setSpacing(0)
-        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setWidget(widget)
-        page_layout.addWidget(scroll)
+        page_layout.addWidget(widget)
         self.page_map[key] = page
         self.stack.addWidget(page)
 
@@ -784,9 +767,8 @@ class MainWindow(QMainWindow):
         target_width = min(1500, max(1040, int(available.width() * 0.97)))
         target_height = min(900, max(620, int(available.height() * 0.94)))
 
-        # On notebook-sized displays or scaled desktops, compact + maximize.
-        if available.width() <= 1400 or available.height() <= 920:
-            self._enable_compact_mode()
+        # On notebook-sized displays, maximize to avoid hidden bottom content.
+        if available.width() <= 1366 or available.height() <= 820:
             self.showMaximized()
             return
 
@@ -794,19 +776,3 @@ class MainWindow(QMainWindow):
         frame = self.frameGeometry()
         frame.moveCenter(available.center())
         self.move(frame.topLeft())
-
-    def _enable_compact_mode(self) -> None:
-        if self._compact_mode_enabled:
-            return
-        self._compact_mode_enabled = True
-
-        self._root_layout.setContentsMargins(8, 8, 8, 8)
-        self._root_layout.setSpacing(6)
-        self._header_layout.setContentsMargins(10, 8, 10, 8)
-        self._shell_layout.setContentsMargins(6, 6, 6, 6)
-        self._shell_layout.setSpacing(8)
-        self.nav.setMinimumWidth(208)
-        self._header_subtitle.setVisible(False)
-        self.pos_tab.enable_compact_mode()
-        if self.inventory_tab:
-            self.inventory_tab.enable_compact_mode()

@@ -1,0 +1,45 @@
+﻿ALTO TRAGO - FIX ERROR NODE/TAURI EN LINUX
+
+Error detectado:
+SyntaxError: Unexpected token '.' en tauri.js
+
+Causa:
+Node.js muy viejo (v12). Tauri CLI necesita Node moderno (recomendado v20).
+
+PASOS (copiar y pegar)
+
+1) Instalar Node.js 20 (reemplaza Node 12)
+sudo apt remove -y nodejs npm
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+2) Verificar versiones
+node -v
+npm -v
+
+(esperado: node v20.x o v22.x)
+
+3) Preparar entorno Rust (si no esta cargado)
+source "$HOME/.cargo/env"
+
+4) Reinstalar dependencias front con Node nuevo
+cd "$HOME/Downloads/Software Venta/venta_tauri"
+rm -rf node_modules
+npm install
+
+5) Ejecutar actualizacion forzando Tauri
+bash "/media/usuario/Ventoy/Software Venta/actualizacion_9/scripts/actualizar_linux.sh" \
+  --project-dir "$HOME/Downloads/Software Venta" \
+  --update-root "/media/usuario/Ventoy/Software Venta/actualizacion_9" \
+  --ui tauri --rebuild --shortcut --shortcut-global --desktop-icon --no-run
+
+6) Verificar que NO quedo en Python
+grep '^Exec=' "$HOME/.local/share/applications/alto-trago.desktop"
+
+Debe incluir VENTA_DB_PATH= y ruta a venta_tauri/src-tauri/target/release/...
+
+7) Abrir app
+gtk-launch alto-trago
+
+Nota:
+Si en paso 6 no existe el .desktop, el script fallo antes. Revisa el ultimo error en terminal.

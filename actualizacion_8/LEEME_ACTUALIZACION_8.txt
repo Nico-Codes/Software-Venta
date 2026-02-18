@@ -1,0 +1,12 @@
+﻿ALTO TRAGO - ACTUALIZACION_8
+
+Incluye migracion Linux a interfaz React/Tauri.
+
+Ruta sugerida en pendrive:
+/media/$USER/Ventoy/Software Venta/actualizacion_8
+
+Comando recomendado:
+bash "/media/$USER/Ventoy/Software Venta/actualizacion_8/scripts/actualizar_linux.sh" \\
+  --project-dir "$HOME/Downloads/Software Venta" \\
+  --update-root "/media/$USER/Ventoy/Software Venta/actualizacion_8" \\
+  --ui tauri --rebuild --shortcut --desktop-icon
