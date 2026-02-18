@@ -1,0 +1,18 @@
+﻿ALTO TRAGO - ACTUALIZACION_10 (FIX LOGIN LEGACY)
+
+Objetivo:
+- Corregir error de login "no such column" al usar base antigua de Python.
+- Habilitar compatibilidad con usuarios legacy (password_hash pbkdf2).
+
+Aplicacion en Linux (desde terminal local):
+bash "/media/$USER/Ventoy/Software Venta/actualizacion_10/scripts/actualizar_linux.sh" \\
+  --project-dir "$HOME/Downloads/Software Venta" \\
+  --update-root "/media/$USER/Ventoy/Software Venta/actualizacion_10" \\
+  --ui tauri --rebuild --shortcut --shortcut-global --desktop-icon --no-run
+
+Luego abrir:
+gtk-launch alto-trago
+
+Nota:
+- No borra datos. Mantiene la misma DB en data/venta_local.db.
+- El script ahora ignora archivos basura de pendrive (.goutputstream-*).
