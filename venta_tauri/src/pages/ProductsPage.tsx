@@ -7,6 +7,7 @@ import {
   updateProduct,
 } from "../tauri";
 import { CategoryAdminSummary, ProductAdminRow } from "../types";
+import { formatInteger, formatMoney, parseIntegerInput } from "../utils/number";
 
 type Notice = {
   tone: "ok" | "error" | "info";
@@ -37,12 +38,6 @@ const EMPTY_FORM: ProductFormState = {
   active: true,
 };
 
-const moneyFormatter = new Intl.NumberFormat("es-AR", {
-  style: "currency",
-  currency: "ARS",
-  maximumFractionDigits: 2,
-});
-
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -54,11 +49,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function parseDecimal(raw: string): number {
-  const parsed = Number.parseFloat(raw.replace(",", "."));
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-  return parsed;
+  return parseIntegerInput(raw);
 }
 
 function mapProductToForm(product: ProductAdminRow): ProductFormState {
@@ -66,10 +57,10 @@ function mapProductToForm(product: ProductAdminRow): ProductFormState {
     name: product.name,
     barcode: product.barcode ?? "",
     categoryId: String(product.categoryId),
-    cost: product.cost.toFixed(2),
-    salePrice: product.salePrice.toFixed(2),
-    stock: product.stock.toFixed(2),
-    minStock: product.minStock.toFixed(2),
+    cost: formatInteger(product.cost),
+    salePrice: formatInteger(product.salePrice),
+    stock: formatInteger(product.stock),
+    minStock: formatInteger(product.minStock),
     autoPrice: product.autoPrice,
     active: product.active,
   };
@@ -315,8 +306,8 @@ export function ProductsPage() {
                   >
                     <td>{product.name}</td>
                     <td>{product.categoryName}</td>
-                    <td>{moneyFormatter.format(product.salePrice)}</td>
-                    <td>{product.stock.toFixed(2)}</td>
+                    <td>{formatMoney(product.salePrice)}</td>
+                    <td>{formatInteger(product.stock)}</td>
                     <td>{product.active ? "Activo" : "Inactivo"}</td>
                   </tr>
                 ))
@@ -372,7 +363,7 @@ export function ProductsPage() {
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={form.cost}
                 onChange={(event) => setForm((prev) => ({ ...prev, cost: event.target.value }))}
               />
@@ -382,7 +373,7 @@ export function ProductsPage() {
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={form.salePrice}
                 disabled={form.autoPrice}
                 onChange={(event) => setForm((prev) => ({ ...prev, salePrice: event.target.value }))}
@@ -396,7 +387,7 @@ export function ProductsPage() {
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={form.stock}
                 onChange={(event) => setForm((prev) => ({ ...prev, stock: event.target.value }))}
               />
@@ -406,7 +397,7 @@ export function ProductsPage() {
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={form.minStock}
                 onChange={(event) => setForm((prev) => ({ ...prev, minStock: event.target.value }))}
               />

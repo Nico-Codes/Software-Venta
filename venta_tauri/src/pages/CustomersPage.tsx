@@ -8,6 +8,7 @@ import {
   updateCustomer,
 } from "../tauri";
 import { CustomerAccountSnapshotResponse, CustomerSummary, PaymentMethod } from "../types";
+import { formatInteger, formatMoney, parseIntegerInput } from "../utils/number";
 
 type Notice = {
   tone: "ok" | "error" | "info";
@@ -29,12 +30,6 @@ const PAYMENT_METHODS_FOR_PAYMENTS: PaymentMethod[] = [
   "Transferencia",
 ];
 
-const moneyFormatter = new Intl.NumberFormat("es-AR", {
-  style: "currency",
-  currency: "ARS",
-  maximumFractionDigits: 2,
-});
-
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -46,11 +41,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function parseDecimal(raw: string): number {
-  const parsed = Number.parseFloat(raw.replace(",", "."));
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-  return parsed;
+  return parseIntegerInput(raw);
 }
 
 function formatDateTime(value: string): string {
@@ -132,9 +123,9 @@ export function CustomersPage() {
     try {
       const snapshot = await customerAccountSnapshot(customerId, 40, 80);
       setAccount(snapshot);
-      setAlertLimitEdit(snapshot.customer.alertLimit.toFixed(2));
+      setAlertLimitEdit(formatInteger(snapshot.customer.alertLimit));
       if (snapshot.customer.debtTotal > 0) {
-        setPaymentAmount(snapshot.customer.debtTotal.toFixed(2));
+        setPaymentAmount(formatInteger(snapshot.customer.debtTotal));
       } else {
         setPaymentAmount("");
       }
@@ -213,10 +204,10 @@ export function CustomersPage() {
       });
       setNotice({
         tone: "ok",
-        text: `Abono aplicado: ${moneyFormatter.format(result.appliedTotal)}. Deuda restante: ${moneyFormatter.format(result.debtTotalAfter)}.`,
+        text: `Abono aplicado: ${formatMoney(result.appliedTotal)}. Deuda restante: ${formatMoney(result.debtTotalAfter)}.`,
       });
       setPaymentNote("");
-      setPaymentAmount(result.debtTotalAfter > 0 ? result.debtTotalAfter.toFixed(2) : "");
+      setPaymentAmount(result.debtTotalAfter > 0 ? formatInteger(result.debtTotalAfter) : "");
       await reloadCustomers(selectedCustomerId);
       await loadAccount(selectedCustomerId);
     } catch (error) {
@@ -247,7 +238,7 @@ export function CustomersPage() {
       const updated = await updateCustomer({ customerId, alertLimit });
       setNotice({
         tone: "ok",
-        text: `Limite actualizado para ${updated.name}: ${moneyFormatter.format(updated.alertLimit)}.`,
+        text: `Limite actualizado para ${updated.name}: ${formatMoney(updated.alertLimit)}.`,
       });
       await reloadCustomers(selectedCustomerId);
       await loadAccount(selectedCustomerId);
@@ -323,7 +314,7 @@ export function CustomersPage() {
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={createForm.alertLimit}
                 onChange={(event) => setCreateForm((prev) => ({ ...prev, alertLimit: event.target.value }))}
               />
@@ -354,14 +345,14 @@ export function CustomersPage() {
               >
                 <span className="row-main">
                   <strong>{customer.name}</strong>
-                  <small>{moneyFormatter.format(customer.debtTotal)}</small>
+                  <small>{formatMoney(customer.debtTotal)}</small>
                 </span>
                 <span className={`row-badge ${customer.overLimit ? "alert" : ""}`}>
-                  Limite {moneyFormatter.format(customer.alertLimit)}
+                  Limite {formatMoney(customer.alertLimit)}
                 </span>
                 {customer.overdueSalesCount > 0 && (
                   <span className="row-badge alert">
-                    {`${customer.overdueSalesCount} vencidas | ${moneyFormatter.format(customer.overdueTotal)}`}
+                    {`${customer.overdueSalesCount} vencidas | ${formatMoney(customer.overdueTotal)}`}
                   </span>
                 )}
               </button>
@@ -393,8 +384,8 @@ export function CustomersPage() {
               </div>
               <div className={`customer-debt ${account.customer.overLimit ? "over-limit" : ""}`}>
                 <span>Deuda total</span>
-                <strong>{moneyFormatter.format(account.customer.debtTotal)}</strong>
-                <small>Limite: {moneyFormatter.format(account.customer.alertLimit)}</small>
+                <strong>{formatMoney(account.customer.debtTotal)}</strong>
+                <small>Limite: {formatMoney(account.customer.alertLimit)}</small>
               </div>
             </header>
 
@@ -406,7 +397,7 @@ export function CustomersPage() {
                   <input
                     type="number"
                     min={0}
-                    step="0.01"
+                    step="1"
                     value={alertLimitEdit}
                     onChange={(event) => setAlertLimitEdit(event.target.value)}
                   />
@@ -432,7 +423,7 @@ export function CustomersPage() {
                   <input
                     type="number"
                     min={0}
-                    step="0.01"
+                    step="1"
                     value={paymentAmount}
                     onChange={(event) => setPaymentAmount(event.target.value)}
                   />
@@ -495,9 +486,9 @@ export function CustomersPage() {
                         account.debtSales.map((sale) => (
                           <tr key={`debt-${sale.saleId}`}>
                             <td>{formatDateTime(sale.soldAt)}</td>
-                            <td>{moneyFormatter.format(sale.total)}</td>
-                            <td>{moneyFormatter.format(sale.paidAmount)}</td>
-                            <td>{moneyFormatter.format(sale.balanceDue)}</td>
+                            <td>{formatMoney(sale.total)}</td>
+                            <td>{formatMoney(sale.paidAmount)}</td>
+                            <td>{formatMoney(sale.balanceDue)}</td>
                             <td>{sale.dueDate ? formatDateTime(`${sale.dueDate}T00:00:00`) : "-"}</td>
                             <td>{sale.overdueDays > 0 ? sale.overdueDays : "-"}</td>
                           </tr>
@@ -531,7 +522,7 @@ export function CustomersPage() {
                         account.recentPayments.map((payment) => (
                           <tr key={`pay-${payment.id}`}>
                             <td>{formatDateTime(payment.paidAt)}</td>
-                            <td>{moneyFormatter.format(payment.amount)}</td>
+                            <td>{formatMoney(payment.amount)}</td>
                             <td>{payment.paymentMethod}</td>
                             <td>{payment.note || "-"}</td>
                           </tr>

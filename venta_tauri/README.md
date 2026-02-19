@@ -1,4 +1,4 @@
-# Venta Modern (Tauri + React + TypeScript)
+# Venta Modern (Tauri + React + TypeScript) - Windows
 
 Este modulo inicia la migracion completa de interfaz a stack moderno desktop:
 
@@ -13,6 +13,7 @@ Este modulo inicia la migracion completa de interfaz a stack moderno desktop:
 - Transiciones suaves entre vistas
 - Estilo moderno orientado a mostrador
 - Comando nativo de prueba (`health_check`) conectado
+- Flujo de release enfocado en Windows (`setup.exe` y `.msi`)
 
 ## Prerrequisitos
 
@@ -31,7 +32,7 @@ $env:PATH = \"$PWD\\.tools\\node-v24.13.1-win-x64;$env:PATH\"
 
 ## Ejecutar en desarrollo
 
-```bash
+```powershell
 cd venta_tauri
 npm install
 npm run tauri:dev
@@ -39,7 +40,7 @@ npm run tauri:dev
 
 ## Build de escritorio
 
-```bash
+```powershell
 cd venta_tauri
 npm run tauri:build
 ```
@@ -49,7 +50,7 @@ npm run tauri:build
 1. Conectar SQLite local desde Rust
 2. Migrar casos de uso: ventas, stock, deudas, reportes
 3. Reemplazar placeholders por pantallas productivas
-4. Empaquetado final con instalador Windows/Linux
+4. Empaquetado final con instalador Windows
 
 ## Setup rapido en Windows (global)
 

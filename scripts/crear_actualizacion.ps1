@@ -38,6 +38,20 @@ function Ensure-FileCopied {
   Copy-Item -Path $src -Destination $dst -Force
 }
 
+function Get-LatestInstaller {
+  param(
+    [string]$BasePath,
+    [string]$Filter
+  )
+  $file = Get-ChildItem -Path $BasePath -File -Filter $Filter -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+  if (-not $file) {
+    throw "No se encontro instalador para filtro: $Filter en $BasePath"
+  }
+  return $file
+}
+
 if (-not (Test-Path $ProjectRoot -PathType Container)) {
   throw "No existe ProjectRoot: $ProjectRoot"
 }
@@ -54,50 +68,59 @@ if (Test-Path $updateDir) {
 }
 New-Item -ItemType Directory -Path $updateDir -Force | Out-Null
 
-# Archivos base siempre incluidos en cada actualizacion.
+$installersRoot = Join-Path $ProjectRoot "dist\installers\windows"
+$latestSetup = Get-LatestInstaller -BasePath $installersRoot -Filter "BUEN TRAGO_*_x64-setup.exe"
+$latestMsi = Get-LatestInstaller -BasePath $installersRoot -Filter "BUEN TRAGO_*_x64_en-US.msi"
+
+$updateInstallersDir = Join-Path $updateDir "installador_windows"
+New-Item -ItemType Directory -Path $updateInstallersDir -Force | Out-Null
+Copy-Item -Path $latestSetup.FullName -Destination (Join-Path $updateInstallersDir $latestSetup.Name) -Force
+Copy-Item -Path $latestMsi.FullName -Destination (Join-Path $updateInstallersDir $latestMsi.Name) -Force
+
 $baseFiles = @(
-  "scripts/actualizar_linux.sh",
-  "scripts/ACTUALIZAR_LINUX.txt"
+  "scripts/ACTUALIZAR_WINDOWS.txt"
 )
 
 foreach ($file in $baseFiles) {
   Ensure-FileCopied -Root $ProjectRoot -UpdateDir $updateDir -RelativePath $file
 }
 
-$filesToInclude = @()
-if ($IncludeFiles.Count -gt 0) {
-  $filesToInclude = $IncludeFiles
-}
-
-foreach ($rel in $filesToInclude) {
+foreach ($rel in $IncludeFiles) {
   Ensure-FileCopied -Root $ProjectRoot -UpdateDir $updateDir -RelativePath $rel
 }
 
-# Customize Linux guide inside each generated update folder so it references
-# the concrete update number (actualizacion_5, actualizacion_6, etc.).
-$linuxGuidePath = Join-Path $updateDir "scripts\ACTUALIZAR_LINUX.txt"
-if (Test-Path $linuxGuidePath -PathType Leaf) {
-  $guide = Get-Content -Path $linuxGuidePath -Raw
+$windowsGuidePath = Join-Path $updateDir "scripts\ACTUALIZAR_WINDOWS.txt"
+if (Test-Path $windowsGuidePath -PathType Leaf) {
+  $guide = Get-Content -Path $windowsGuidePath -Raw
   $guide = $guide.Replace("actualizacion_N", $updateFolderName)
-  Set-Content -Path $linuxGuidePath -Value $guide -Encoding UTF8
+  Set-Content -Path $windowsGuidePath -Value $guide -Encoding UTF8
 }
 
-$allIncluded = @($baseFiles + $filesToInclude | Sort-Object -Unique)
+$allIncluded = @(
+  "installador_windows/$($latestSetup.Name)",
+  "installador_windows/$($latestMsi.Name)"
+)
+$allIncluded += $baseFiles
+$allIncluded += $IncludeFiles
+$allIncluded = $allIncluded | Sort-Object -Unique
+
 $list = ($allIncluded | ForEach-Object { "- $_" }) -join "`n"
 $readme = @"
-ALTO TRAGO - $($updateFolderName.ToUpper())
+BUEN TRAGO - $($updateFolderName.ToUpper())
 
-Esta carpeta se copia completa al pendrive.
+Actualizacion enfocada solo en Windows.
 
 Archivos incluidos:
 $list
 
-Uso recomendado en Linux:
-chmod +x "/media/`$USER/Ventoy/Software Venta/$updateFolderName/scripts/actualizar_linux.sh"
+Instalacion recomendada:
+1) Ejecutar:
+   installador_windows/$($latestSetup.Name)
+2) Si prefieres MSI:
+   installador_windows/$($latestMsi.Name)
 
-bash "/media/`$USER/Ventoy/Software Venta/$updateFolderName/scripts/actualizar_linux.sh" \
-  --project-dir "`$HOME/Downloads/Software Venta" \
-  --update-root "/media/`$USER/Ventoy/Software Venta/$updateFolderName"
+Guia rapida:
+- scripts/ACTUALIZAR_WINDOWS.txt
 "@
 
 $readmePath = Join-Path $updateDir ("LEEME_{0}.txt" -f $updateFolderName.ToUpper())

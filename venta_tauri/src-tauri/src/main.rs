@@ -299,6 +299,9 @@ struct DashboardSummary {
     paid_total: f64,
     due_total: f64,
     estimated_profit: f64,
+    internal_consumption_total: f64,
+    internal_operations_count: i64,
+    net_profit_after_internal: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -354,6 +357,9 @@ struct ReportSummary {
     paid_total: f64,
     due_total: f64,
     estimated_profit: f64,
+    internal_consumption_total: f64,
+    internal_operations_count: i64,
+    net_profit_after_internal: f64,
     avg_ticket: f64,
 }
 
@@ -520,6 +526,9 @@ struct DashboardCompareBlock {
     paid_total: f64,
     due_total: f64,
     estimated_profit: f64,
+    internal_consumption_total: f64,
+    internal_operations_count: i64,
+    net_profit_after_internal: f64,
     sales_count: i64,
     avg_ticket: f64,
 }
@@ -747,6 +756,17 @@ fn ensure_column_exists(
     Ok(())
 }
 
+fn round_integer(value: f64) -> f64 {
+    if !value.is_finite() {
+        return 0.0;
+    }
+    value.round()
+}
+
+fn round_non_negative_integer(value: f64) -> f64 {
+    round_integer(value).max(0.0)
+}
+
 fn verify_legacy_password(password: &str, stored_hash: &str) -> bool {
     if password.trim().is_empty() || stored_hash.trim().is_empty() {
         return false;
@@ -847,14 +867,14 @@ fn month_bounds(month_key: &str) -> Result<(String, String), String> {
 }
 
 fn format_ticket_amount(value: f64) -> String {
-    format!("{value:.2}")
+    format!("{:.0}", round_integer(value))
 }
 
 fn read_ticket_settings(conn: &Connection) -> TicketSettingsResponse {
     let width_raw = get_setting_i64(conn, TICKET_PAPER_WIDTH_KEY, 58);
     let width = if width_raw >= 80 { 80 } else { 58 };
     TicketSettingsResponse {
-        store_name: get_setting_text(conn, TICKET_STORE_NAME_KEY, "ALTO TRAGO"),
+        store_name: get_setting_text(conn, TICKET_STORE_NAME_KEY, "BUEN TRAGO"),
         tax_id: get_setting_text(conn, TICKET_TAX_ID_KEY, ""),
         address: get_setting_text(conn, TICKET_ADDRESS_KEY, ""),
         phone: get_setting_text(conn, TICKET_PHONE_KEY, ""),
@@ -895,19 +915,37 @@ fn compute_delta_percent(current: f64, previous: f64) -> f64 {
 }
 
 fn summarize_month(conn: &Connection, month_key: &str) -> Result<DashboardCompareBlock, String> {
-    let (gross_total, paid_total, due_total, sales_count): (f64, f64, f64, i64) = conn
+    let (
+        gross_total,
+        paid_total,
+        due_total,
+        sales_count,
+        internal_consumption_total,
+        internal_operations_count,
+    ): (f64, f64, f64, i64, f64, i64) = conn
         .query_row(
             "
             SELECT
-                COALESCE(SUM(total), 0),
-                COALESCE(SUM(paid_amount), 0),
-                COALESCE(SUM(balance_due), 0),
-                COUNT(*)
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') <> 'internal' THEN total ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') <> 'internal' THEN paid_amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') <> 'internal' THEN balance_due ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') <> 'internal' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') = 'internal' THEN total ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') = 'internal' THEN 1 ELSE 0 END), 0)
             FROM sales
             WHERE substr(sold_at, 1, 7) = ?
         ",
             params![month_key],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
         )
         .map_err(|e| db_error("No se pudo resumir ventas por mes", e))?;
 
@@ -917,12 +955,13 @@ fn summarize_month(conn: &Connection, month_key: &str) -> Result<DashboardCompar
             SELECT COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
             FROM sale_items si
             JOIN sales s ON s.id = si.sale_id
-            WHERE substr(s.sold_at, 1, 7) = ?
+            WHERE substr(s.sold_at, 1, 7) = ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
         ",
             params![month_key],
             |row| row.get(0),
         )
         .map_err(|e| db_error("No se pudo resumir ganancia por mes", e))?;
+    let net_profit_after_internal = round_integer(estimated_profit - internal_consumption_total);
 
     let avg_ticket = if sales_count > 0 {
         gross_total / sales_count as f64
@@ -936,6 +975,9 @@ fn summarize_month(conn: &Connection, month_key: &str) -> Result<DashboardCompar
         paid_total,
         due_total,
         estimated_profit,
+        internal_consumption_total,
+        internal_operations_count,
+        net_profit_after_internal,
         sales_count,
         avg_ticket,
     })
@@ -1296,6 +1338,34 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         conn.execute("ALTER TABLE sales ADD COLUMN due_date TEXT", [])
             .map_err(|e| db_error("No se pudo agregar columna due_date en sales", e))?;
     }
+    ensure_column_exists(
+        conn,
+        "sales",
+        "sale_type",
+        "TEXT NOT NULL DEFAULT 'cash'",
+        "No se pudo agregar columna sale_type en sales",
+    )?;
+    ensure_column_exists(
+        conn,
+        "sales",
+        "paid_amount",
+        "REAL NOT NULL DEFAULT 0",
+        "No se pudo agregar columna paid_amount en sales",
+    )?;
+    ensure_column_exists(
+        conn,
+        "sales",
+        "balance_due",
+        "REAL NOT NULL DEFAULT 0",
+        "No se pudo agregar columna balance_due en sales",
+    )?;
+    ensure_column_exists(
+        conn,
+        "sales",
+        "status",
+        "TEXT NOT NULL DEFAULT 'paid'",
+        "No se pudo agregar columna status en sales",
+    )?;
 
     ensure_column_exists(
         conn,
@@ -1303,6 +1373,13 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         "display_name",
         "TEXT",
         "No se pudo agregar columna display_name en users",
+    )?;
+    ensure_column_exists(
+        conn,
+        "users",
+        "role",
+        "TEXT NOT NULL DEFAULT 'seller'",
+        "No se pudo agregar columna role en users",
     )?;
     ensure_column_exists(
         conn,
@@ -1370,7 +1447,7 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|e| db_error("No se pudo asegurar setting rounding_base", e))?;
 
     let default_settings = [
-        (TICKET_STORE_NAME_KEY, "ALTO TRAGO"),
+        (TICKET_STORE_NAME_KEY, "BUEN TRAGO"),
         (TICKET_TAX_ID_KEY, ""),
         (TICKET_ADDRESS_KEY, ""),
         (TICKET_PHONE_KEY, ""),
@@ -1391,6 +1468,16 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         .map_err(|e| db_error("No se pudo asegurar configuracion por defecto", e))?;
     }
 
+    conn.execute(
+        "
+        UPDATE settings
+        SET value = 'BUEN TRAGO'
+        WHERE key = ? AND upper(trim(value)) = 'ALTO TRAGO'
+    ",
+        params![TICKET_STORE_NAME_KEY],
+    )
+    .map_err(|e| db_error("No se pudo migrar nombre comercial por defecto", e))?;
+
     let category_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM categories", [], |row| row.get(0))
         .map_err(|e| db_error("No se pudo contar categorias", e))?;
@@ -1409,6 +1496,8 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
             .map_err(|e| db_error("No se pudo insertar categoria por defecto", e))?;
         }
     }
+
+    ensure_default_users(conn)?;
 
     Ok(())
 }
@@ -1442,6 +1531,79 @@ fn normalize_user_role(raw: &str) -> Result<String, String> {
         _ => return Err("Rol invalido. Usa admin o seller".to_string()),
     };
     Ok(normalized.to_string())
+}
+
+fn ensure_default_user(
+    conn: &Connection,
+    username: &str,
+    display_name: &str,
+    role: &str,
+    default_password: &str,
+) -> Result<(), String> {
+    let existing = conn
+        .query_row(
+            "
+            SELECT
+                id,
+                COALESCE(password, '') AS password,
+                COALESCE(display_name, '') AS display_name
+            FROM users
+            WHERE username = ?
+            ORDER BY id ASC
+            LIMIT 1
+        ",
+            params![username],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo consultar usuario por defecto", e))?;
+
+    if let Some((user_id, existing_password, existing_display_name)) = existing {
+        let next_password = if existing_password.trim().is_empty() {
+            default_password.to_string()
+        } else {
+            existing_password
+        };
+        let next_display_name = if existing_display_name.trim().is_empty() {
+            display_name.to_string()
+        } else {
+            existing_display_name
+        };
+        conn.execute(
+            "
+            UPDATE users
+            SET display_name = ?, role = ?, password = ?, active = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ",
+            params![next_display_name, role, next_password, user_id],
+        )
+        .map_err(|e| db_error("No se pudo actualizar usuario por defecto", e))?;
+    } else {
+        conn.execute(
+            "
+            INSERT INTO users(username, display_name, role, password, active, updated_at)
+            VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+        ",
+            params![username, display_name, role, default_password],
+        )
+        .map_err(|e| db_error("No se pudo crear usuario por defecto", e))?;
+    }
+
+    Ok(())
+}
+
+fn ensure_default_users(conn: &Connection) -> Result<(), String> {
+    ensure_default_user(conn, "admin", "Administrador", "admin", "admin")
+        .map_err(|e| format!("No se pudo asegurar usuario admin por defecto: {e}"))?;
+    ensure_default_user(conn, "usuario", "Usuario", "seller", "usuario")
+        .map_err(|e| format!("No se pudo asegurar usuario vendedor por defecto: {e}"))?;
+    Ok(())
 }
 
 fn count_active_admins(conn: &Connection) -> Result<i64, String> {
@@ -1691,6 +1853,7 @@ fn normalize_payment_method(raw: &str) -> Result<String, String> {
         "credito" => "Credito",
         "transferencia" => "Transferencia",
         "deuda" | "cuenta corriente" | "cuenta_corriente" => "Deuda",
+        "consumo interno" | "consumo_interno" | "interno" => "Consumo interno",
         _ => return Err("Metodo de pago invalido".to_string()),
     };
     Ok(normalized.to_string())
@@ -1766,6 +1929,7 @@ fn payment_methods(app: AppHandle) -> Result<Vec<String>, String> {
         "Debito".to_string(),
         "Transferencia".to_string(),
         "Deuda".to_string(),
+        "Consumo interno".to_string(),
     ])
 }
 
@@ -1804,8 +1968,8 @@ fn auth_bootstrap_create_admin(
     }
 
     let password = payload.password.trim().to_string();
-    if password.len() < 6 {
-        return Err("La clave inicial debe tener al menos 6 caracteres".to_string());
+    if password.len() < 4 {
+        return Err("La clave inicial debe tener al menos 4 caracteres".to_string());
     }
 
     conn.execute(
@@ -1851,37 +2015,50 @@ fn auth_login(app: AppHandle, payload: LoginRequest) -> Result<AuthSessionRespon
         return Err("Usuario y clave son obligatorios".to_string());
     }
 
+    let has_display_name = table_has_column(&conn, "users", "display_name")?;
+    let has_role = table_has_column(&conn, "users", "role")?;
+    let has_active = table_has_column(&conn, "users", "active")?;
+    let has_password = table_has_column(&conn, "users", "password")?;
     let has_password_hash = table_has_column(&conn, "users", "password_hash")?;
-    let login_sql = if has_password_hash {
-        "
-        SELECT
-            id,
-            username,
-            COALESCE(NULLIF(TRIM(display_name), ''), username) AS display_name,
-            role,
-            COALESCE(password, '') AS password,
-            COALESCE(password_hash, '') AS password_hash
-        FROM users
-        WHERE username = ? AND active = 1
-        LIMIT 1
-    "
+
+    let display_name_expr = if has_display_name {
+        "COALESCE(NULLIF(TRIM(display_name), ''), username)"
     } else {
+        "username"
+    };
+    let role_expr = if has_role {
+        "COALESCE(NULLIF(TRIM(role), ''), 'seller')"
+    } else {
+        "'seller'"
+    };
+    let password_expr = if has_password {
+        "COALESCE(password, '')"
+    } else {
+        "''"
+    };
+    let password_hash_expr = if has_password_hash {
+        "COALESCE(password_hash, '')"
+    } else {
+        "''"
+    };
+    let active_filter = if has_active { "AND active = 1" } else { "" };
+    let login_sql = format!(
         "
         SELECT
             id,
             username,
-            COALESCE(NULLIF(TRIM(display_name), ''), username) AS display_name,
-            role,
-            COALESCE(password, '') AS password,
-            '' AS password_hash
+            {display_name_expr} AS display_name,
+            {role_expr} AS role,
+            {password_expr} AS password,
+            {password_hash_expr} AS password_hash
         FROM users
-        WHERE username = ? AND active = 1
+        WHERE username = ? {active_filter}
         LIMIT 1
     "
-    };
+    );
 
     let row = conn
-        .query_row(login_sql, params![username], |row| {
+        .query_row(&login_sql, params![username], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -2685,10 +2862,11 @@ fn create_customer(
         return Err("El nombre del cliente es obligatorio".to_string());
     }
 
-    let alert_limit = payload.alert_limit.unwrap_or(50000.0);
-    if alert_limit < 0.0 {
+    let raw_alert_limit = payload.alert_limit.unwrap_or(50000.0);
+    if raw_alert_limit < 0.0 {
         return Err("El limite de alerta no puede ser negativo".to_string());
     }
+    let alert_limit = round_integer(raw_alert_limit);
 
     let clean_phone = payload.phone.unwrap_or_default().trim().to_string();
     let clean_email = payload.email.unwrap_or_default().trim().to_string();
@@ -2761,10 +2939,11 @@ fn update_customer(
         .map_err(|e| db_error("No se pudo consultar cliente para actualizar", e))?
         .ok_or_else(|| "Cliente no encontrado".to_string())?;
 
-    let next_alert = payload.alert_limit.unwrap_or(current.0);
-    if next_alert < 0.0 {
+    let raw_next_alert = payload.alert_limit.unwrap_or(current.0);
+    if raw_next_alert < 0.0 {
         return Err("El limite de alerta no puede ser negativo".to_string());
     }
+    let next_alert = round_integer(raw_next_alert);
     let next_notes = payload
         .notes
         .as_deref()
@@ -2991,13 +3170,14 @@ fn register_customer_payment(
     if payload.customer_id <= 0 {
         return Err("Cliente invalido".to_string());
     }
-    if payload.amount <= 0.0 {
+    let amount = round_integer(payload.amount);
+    if amount <= 0.0 {
         return Err("El monto debe ser mayor a cero".to_string());
     }
 
     let method = normalize_payment_method(&payload.payment_method)?;
-    if method == "Deuda" {
-        return Err("El metodo de pago para abono no puede ser Deuda".to_string());
+    if method == "Deuda" || method == "Consumo interno" {
+        return Err("Metodo de pago invalido para abono".to_string());
     }
 
     let mut conn = open_db(&app)?;
@@ -3020,7 +3200,8 @@ fn register_customer_payment(
         None => return Err("Cliente no encontrado".to_string()),
     }
 
-    let debt_total_before: f64 = tx
+    let debt_total_before: f64 = round_non_negative_integer(
+        tx
         .query_row(
             "
             SELECT COALESCE(SUM(CASE WHEN balance_due > 0 THEN balance_due ELSE 0 END), 0)
@@ -3030,15 +3211,16 @@ fn register_customer_payment(
             params![payload.customer_id],
             |row| row.get(0),
         )
-        .map_err(|e| db_error("No se pudo calcular deuda actual del cliente", e))?;
+        .map_err(|e| db_error("No se pudo calcular deuda actual del cliente", e))?,
+    );
     if debt_total_before <= 1e-9 {
         return Err("El cliente no tiene deuda pendiente".to_string());
     }
-    if payload.amount - debt_total_before > 1e-9 {
+    if amount - debt_total_before > 1e-9 {
         return Err("El monto del abono supera la deuda pendiente".to_string());
     }
 
-    let mut remaining = payload.amount;
+    let mut remaining = amount;
     let mut affected_sales = 0_i64;
     let clean_note = payload.note.unwrap_or_default().trim().to_string();
 
@@ -3063,14 +3245,15 @@ fn register_customer_payment(
             if remaining <= 1e-9 {
                 break;
             }
-            let (sale_id, balance_due) =
+            let (sale_id, balance_due_raw) =
                 debt_row.map_err(|e| db_error("No se pudo mapear deuda para aplicar pago", e))?;
+            let balance_due = round_non_negative_integer(balance_due_raw);
             let applied = remaining.min(balance_due);
             if applied <= 1e-9 {
                 continue;
             }
 
-            let next_balance = (balance_due - applied).max(0.0);
+            let next_balance = round_non_negative_integer(balance_due - applied);
             let next_status = if next_balance <= 1e-9 {
                 "paid".to_string()
             } else {
@@ -3080,7 +3263,7 @@ fn register_customer_payment(
             tx.execute(
                 "
                 UPDATE sales
-                SET paid_amount = paid_amount + ?, balance_due = ?, status = ?
+                SET paid_amount = ROUND(paid_amount + ?, 0), balance_due = ?, status = ?
                 WHERE id = ?
             ",
                 params![applied, next_balance, next_status, sale_id],
@@ -3111,16 +3294,18 @@ fn register_customer_payment(
             .map_err(|e| db_error("No se pudo registrar abono del cliente", e))?;
 
             remaining -= applied;
+            remaining = round_non_negative_integer(remaining);
             affected_sales += 1;
         }
     }
 
-    let applied_total = payload.amount - remaining.max(0.0);
+    let applied_total = round_non_negative_integer(amount - remaining.max(0.0));
     if applied_total <= 1e-9 {
         return Err("No se pudo aplicar el abono a deudas pendientes".to_string());
     }
 
-    let debt_total_after: f64 = tx
+    let debt_total_after: f64 = round_non_negative_integer(
+        tx
         .query_row(
             "
             SELECT COALESCE(SUM(CASE WHEN balance_due > 0 THEN balance_due ELSE 0 END), 0)
@@ -3130,7 +3315,8 @@ fn register_customer_payment(
             params![payload.customer_id],
             |row| row.get(0),
         )
-        .map_err(|e| db_error("No se pudo calcular deuda final del cliente", e))?;
+        .map_err(|e| db_error("No se pudo calcular deuda final del cliente", e))?,
+    );
 
     tx.commit()
         .map_err(|e| db_error("No se pudo confirmar pago de cliente", e))?;
@@ -3421,6 +3607,10 @@ fn create_product(app: AppHandle, payload: CreateProductRequest) -> Result<Produ
     if payload.min_stock < 0.0 {
         return Err("El stock minimo no puede ser negativo".to_string());
     }
+    let cost = round_integer(payload.cost);
+    let stock = round_integer(payload.stock);
+    let min_stock = round_integer(payload.min_stock);
+    let manual_sale_price = round_integer(payload.sale_price);
 
     let margin_percent: f64 = conn
         .query_row(
@@ -3434,9 +3624,9 @@ fn create_product(app: AppHandle, payload: CreateProductRequest) -> Result<Produ
 
     let rounding_base = get_rounding_base(&conn);
     let final_sale_price = if payload.auto_price {
-        calculate_auto_price(payload.cost, margin_percent, rounding_base)
+        round_integer(calculate_auto_price(cost, margin_percent, rounding_base))
     } else {
-        payload.sale_price
+        manual_sale_price
     };
     if final_sale_price < 0.0 {
         return Err("El precio de venta no puede ser negativo".to_string());
@@ -3460,11 +3650,11 @@ fn create_product(app: AppHandle, payload: CreateProductRequest) -> Result<Produ
                 Some(clean_barcode.clone())
             },
             payload.category_id,
-            payload.cost,
+            cost,
             final_sale_price,
             if payload.auto_price { 1 } else { 0 },
-            payload.stock,
-            payload.min_stock
+            stock,
+            min_stock
         ],
     );
 
@@ -3524,6 +3714,10 @@ fn update_product(
     if payload.min_stock < 0.0 {
         return Err("El stock minimo no puede ser negativo".to_string());
     }
+    let cost = round_integer(payload.cost);
+    let stock = round_integer(payload.stock);
+    let min_stock = round_integer(payload.min_stock);
+    let manual_sale_price = round_integer(payload.sale_price);
 
     let mut conn = open_db(&app)?;
     let _admin = require_admin_user(&conn)?;
@@ -3539,9 +3733,9 @@ fn update_product(
 
     let rounding_base = get_rounding_base(&conn);
     let final_sale_price = if payload.auto_price {
-        calculate_auto_price(payload.cost, margin_percent, rounding_base)
+        round_integer(calculate_auto_price(cost, margin_percent, rounding_base))
     } else {
-        payload.sale_price
+        manual_sale_price
     };
     if final_sale_price < 0.0 {
         return Err("El precio de venta no puede ser negativo".to_string());
@@ -3574,11 +3768,11 @@ fn update_product(
                 Some(clean_barcode.clone())
             },
             payload.category_id,
-            payload.cost,
+            cost,
             final_sale_price,
             if payload.auto_price { 1 } else { 0 },
-            payload.stock,
-            payload.min_stock,
+            stock,
+            min_stock,
             if payload.active { 1 } else { 0 },
             payload.id
         ],
@@ -3701,9 +3895,9 @@ fn register_inventory_movement(
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
-                    row.get::<_, f64>(3)?,
-                    row.get::<_, f64>(4)?,
-                    row.get::<_, f64>(5)?,
+                    round_integer(row.get::<_, f64>(3)?),
+                    round_integer(row.get::<_, f64>(4)?),
+                    round_integer(row.get::<_, f64>(5)?),
                 ))
             },
         )
@@ -3713,22 +3907,22 @@ fn register_inventory_movement(
 
     let (quantity_delta, stock_after, message) = match movement_type.as_str() {
         "manual_in" => {
-            let quantity = payload.quantity.unwrap_or(0.0);
+            let quantity = round_integer(payload.quantity.unwrap_or(0.0));
             if quantity <= 0.0 {
                 return Err("La cantidad de entrada debe ser mayor a cero".to_string());
             }
             (
                 quantity,
-                stock_before + quantity,
+                round_integer(stock_before + quantity),
                 "Entrada de inventario registrada".to_string(),
             )
         }
         "manual_out" => {
-            let quantity = payload.quantity.unwrap_or(0.0);
+            let quantity = round_integer(payload.quantity.unwrap_or(0.0));
             if quantity <= 0.0 {
                 return Err("La cantidad de salida debe ser mayor a cero".to_string());
             }
-            let next_stock = stock_before - quantity;
+            let next_stock = round_integer(stock_before - quantity);
             if next_stock < 0.0 {
                 return Err("La salida no puede dejar stock negativo".to_string());
             }
@@ -3739,13 +3933,15 @@ fn register_inventory_movement(
             )
         }
         "adjustment" => {
-            let target = payload
+            let target = round_integer(
+                payload
                 .stock_target
-                .ok_or_else(|| "Debes indicar stock objetivo para ajuste".to_string())?;
+                .ok_or_else(|| "Debes indicar stock objetivo para ajuste".to_string())?,
+            );
             if target < 0.0 {
                 return Err("El stock objetivo no puede ser negativo".to_string());
             }
-            let delta = target - stock_before;
+            let delta = round_integer(target - stock_before);
             if delta.abs() <= 1e-9 {
                 return Err("El ajuste no genera cambios de stock".to_string());
             }
@@ -3883,10 +4079,11 @@ fn quick_stock_add_by_barcode(
     let mut conn = open_db(&app)?;
     let _admin = require_admin_user(&conn)?;
     let clean_barcode = payload.barcode.trim().to_string();
+    let quantity = round_integer(payload.quantity);
     if clean_barcode.is_empty() {
         return Err("Escanea o ingresa un codigo de barras".to_string());
     }
-    if payload.quantity <= 0.0 {
+    if quantity <= 0.0 {
         return Err("La cantidad debe ser mayor a cero".to_string());
     }
 
@@ -3924,7 +4121,7 @@ fn quick_stock_add_by_barcode(
         });
     };
 
-    let stock_after = stock_before + payload.quantity;
+    let stock_after = round_integer(stock_before + quantity);
     let note_text = payload.note.unwrap_or_default().trim().to_string();
 
     let tx = conn
@@ -3950,7 +4147,7 @@ fn quick_stock_add_by_barcode(
         params![
             product_id,
             "manual_in",
-            payload.quantity,
+            quantity,
             stock_before,
             stock_after,
             unit_cost,
@@ -3991,19 +4188,37 @@ fn dashboard_snapshot(
     let _admin = require_admin_user(&conn)?;
     let month_key = resolve_month_key(month)?;
 
-    let (gross_total, paid_total, due_total, sales_count): (f64, f64, f64, i64) = conn
+    let (
+        gross_total,
+        paid_total,
+        due_total,
+        sales_count,
+        internal_consumption_total,
+        internal_operations_count,
+    ): (f64, f64, f64, i64, f64, i64) = conn
         .query_row(
             "
             SELECT
-                COALESCE(SUM(total), 0),
-                COALESCE(SUM(paid_amount), 0),
-                COALESCE(SUM(balance_due), 0),
-                COUNT(*)
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') <> 'internal' THEN total ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') <> 'internal' THEN paid_amount ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') <> 'internal' THEN balance_due ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') <> 'internal' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') = 'internal' THEN total ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN COALESCE(sale_type, 'cash') = 'internal' THEN 1 ELSE 0 END), 0)
             FROM sales
             WHERE substr(sold_at, 1, 7) = ?
         ",
             params![&month_key],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
         )
         .map_err(|e| db_error("No se pudo calcular resumen de ventas", e))?;
 
@@ -4013,12 +4228,13 @@ fn dashboard_snapshot(
             SELECT COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
             FROM sale_items si
             JOIN sales s ON s.id = si.sale_id
-            WHERE substr(s.sold_at, 1, 7) = ?
+            WHERE substr(s.sold_at, 1, 7) = ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
         ",
             params![&month_key],
             |row| row.get(0),
         )
         .map_err(|e| db_error("No se pudo calcular ganancia estimada", e))?;
+    let net_profit_after_internal = round_integer(estimated_profit - internal_consumption_total);
 
     let mut payment_breakdown: Vec<PaymentBreakdownItem> = Vec::new();
     let mut payment_stmt = conn
@@ -4026,7 +4242,7 @@ fn dashboard_snapshot(
             "
             SELECT payment_method, COALESCE(SUM(paid_amount), 0)
             FROM sales
-            WHERE substr(sold_at, 1, 7) = ? AND paid_amount > 0
+            WHERE substr(sold_at, 1, 7) = ? AND paid_amount > 0 AND COALESCE(sale_type, 'cash') <> 'internal'
             GROUP BY payment_method
             ORDER BY COALESCE(SUM(paid_amount), 0) DESC, payment_method ASC
         ",
@@ -4054,7 +4270,7 @@ fn dashboard_snapshot(
                 COALESCE(SUM(si.subtotal), 0)
             FROM sale_items si
             JOIN sales s ON s.id = si.sale_id
-            WHERE substr(s.sold_at, 1, 7) = ?
+            WHERE substr(s.sold_at, 1, 7) = ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
             GROUP BY si.product_name
             HAVING COALESCE(SUM(si.quantity), 0) > 0
             ORDER BY COALESCE(SUM(si.quantity), 0) DESC, COALESCE(SUM(si.subtotal), 0) DESC
@@ -4085,7 +4301,7 @@ fn dashboard_snapshot(
                 COALESCE(SUM(si.subtotal), 0)
             FROM sale_items si
             JOIN sales s ON s.id = si.sale_id
-            WHERE substr(s.sold_at, 1, 7) = ?
+            WHERE substr(s.sold_at, 1, 7) = ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
             GROUP BY si.product_name
             HAVING COALESCE(SUM(si.quantity), 0) > 0
             ORDER BY COALESCE(SUM(si.quantity), 0) ASC, COALESCE(SUM(si.subtotal), 0) ASC
@@ -4143,7 +4359,7 @@ fn dashboard_snapshot(
             "
             SELECT substr(sold_at, 1, 10) AS sold_day, COALESCE(SUM(total), 0)
             FROM sales
-            WHERE substr(sold_at, 1, 7) = ?
+            WHERE substr(sold_at, 1, 7) = ? AND COALESCE(sale_type, 'cash') <> 'internal'
             GROUP BY sold_day
             ORDER BY sold_day ASC
         ",
@@ -4169,6 +4385,9 @@ fn dashboard_snapshot(
             paid_total,
             due_total,
             estimated_profit,
+            internal_consumption_total,
+            internal_operations_count,
+            net_profit_after_internal,
         },
         payment_breakdown,
         top_products,
@@ -4208,7 +4427,7 @@ fn dashboard_executive(
                 COALESCE(SUM(total), 0) AS total,
                 COUNT(*) AS sales_count
             FROM sales
-            WHERE sold_at >= ? AND sold_at < ?
+            WHERE sold_at >= ? AND sold_at < ? AND COALESCE(sale_type, 'cash') <> 'internal'
             GROUP BY hour
             ORDER BY total DESC, hour ASC
             LIMIT 8
@@ -4240,7 +4459,7 @@ fn dashboard_executive(
             JOIN sales s ON s.id = si.sale_id
             JOIN products p ON p.id = si.product_id
             JOIN categories c ON c.id = p.category_id
-            WHERE s.sold_at >= ? AND s.sold_at < ?
+            WHERE s.sold_at >= ? AND s.sold_at < ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
             GROUP BY c.name
             ORDER BY profit DESC, revenue DESC
             LIMIT 10
@@ -4297,23 +4516,28 @@ fn sales_report(
 
     let safe_sales_limit = sales_limit.unwrap_or(200).clamp(1, 1200);
     let safe_products_limit = products_limit.unwrap_or(120).clamp(1, 600);
+    let filter_internal_only = matches!(filter_method.as_deref(), Some("Consumo interno"));
 
     let (gross_total, paid_total, due_total, sales_count): (f64, f64, f64, i64) =
         if let Some(method) = &filter_method {
-            conn.query_row(
-                "
-                SELECT
-                    COALESCE(SUM(total), 0),
-                    COALESCE(SUM(paid_amount), 0),
-                    COALESCE(SUM(balance_due), 0),
-                    COUNT(*)
-                FROM sales
-                WHERE sold_at >= ? AND sold_at < ? AND payment_method = ?
-            ",
-                params![&start_ts, &end_ts, method],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .map_err(|e| db_error("No se pudo calcular resumen del reporte", e))?
+            if filter_internal_only {
+                (0.0, 0.0, 0.0, 0)
+            } else {
+                conn.query_row(
+                    "
+                    SELECT
+                        COALESCE(SUM(total), 0),
+                        COALESCE(SUM(paid_amount), 0),
+                        COALESCE(SUM(balance_due), 0),
+                        COUNT(*)
+                    FROM sales
+                    WHERE sold_at >= ? AND sold_at < ? AND payment_method = ? AND COALESCE(sale_type, 'cash') <> 'internal'
+                ",
+                    params![&start_ts, &end_ts, method],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .map_err(|e| db_error("No se pudo calcular resumen del reporte", e))?
+            }
         } else {
             conn.query_row(
                 "
@@ -4323,7 +4547,7 @@ fn sales_report(
                     COALESCE(SUM(balance_due), 0),
                     COUNT(*)
                 FROM sales
-                WHERE sold_at >= ? AND sold_at < ?
+                WHERE sold_at >= ? AND sold_at < ? AND COALESCE(sale_type, 'cash') <> 'internal'
             ",
                 params![&start_ts, &end_ts],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -4332,30 +4556,65 @@ fn sales_report(
         };
 
     let estimated_profit: f64 = if let Some(method) = &filter_method {
-        conn.query_row(
-            "
-            SELECT COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
-            FROM sale_items si
-            JOIN sales s ON s.id = si.sale_id
-            WHERE s.sold_at >= ? AND s.sold_at < ? AND s.payment_method = ?
-        ",
-            params![&start_ts, &end_ts, method],
-            |row| row.get(0),
-        )
-        .map_err(|e| db_error("No se pudo calcular ganancia del reporte", e))?
+        if filter_internal_only {
+            0.0
+        } else {
+            conn.query_row(
+                "
+                SELECT COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
+                FROM sale_items si
+                JOIN sales s ON s.id = si.sale_id
+                WHERE s.sold_at >= ? AND s.sold_at < ? AND s.payment_method = ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
+            ",
+                params![&start_ts, &end_ts, method],
+                |row| row.get(0),
+            )
+            .map_err(|e| db_error("No se pudo calcular ganancia del reporte", e))?
+        }
     } else {
         conn.query_row(
             "
             SELECT COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
             FROM sale_items si
             JOIN sales s ON s.id = si.sale_id
-            WHERE s.sold_at >= ? AND s.sold_at < ?
+            WHERE s.sold_at >= ? AND s.sold_at < ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
         ",
             params![&start_ts, &end_ts],
             |row| row.get(0),
         )
         .map_err(|e| db_error("No se pudo calcular ganancia del reporte", e))?
     };
+    let (internal_consumption_total, internal_operations_count): (f64, i64) =
+        if filter_internal_only {
+            conn.query_row(
+                "
+                SELECT
+                    COALESCE(SUM(total), 0),
+                    COUNT(*)
+                FROM sales
+                WHERE sold_at >= ? AND sold_at < ? AND COALESCE(sale_type, 'cash') = 'internal'
+            ",
+                params![&start_ts, &end_ts],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| db_error("No se pudo calcular consumo interno del reporte", e))?
+        } else if filter_method.is_none() {
+            conn.query_row(
+                "
+                SELECT
+                    COALESCE(SUM(total), 0),
+                    COUNT(*)
+                FROM sales
+                WHERE sold_at >= ? AND sold_at < ? AND COALESCE(sale_type, 'cash') = 'internal'
+            ",
+                params![&start_ts, &end_ts],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| db_error("No se pudo calcular consumo interno del reporte", e))?
+        } else {
+            (0.0, 0)
+        };
+    let net_profit_after_internal = round_integer(estimated_profit - internal_consumption_total);
 
     let avg_ticket = if sales_count > 0 {
         gross_total / (sales_count as f64)
@@ -4370,7 +4629,7 @@ fn sales_report(
                 "
                 SELECT COALESCE(SUM(paid_amount), 0)
                 FROM sales
-                WHERE sold_at >= ? AND sold_at < ? AND payment_method = ?
+                WHERE sold_at >= ? AND sold_at < ? AND payment_method = ? AND COALESCE(sale_type, 'cash') <> 'internal'
             ",
                 params![&start_ts, &end_ts, method],
                 |row| row.get(0),
@@ -4386,7 +4645,7 @@ fn sales_report(
                 "
                 SELECT payment_method, COALESCE(SUM(paid_amount), 0)
                 FROM sales
-                WHERE sold_at >= ? AND sold_at < ? AND paid_amount > 0
+                WHERE sold_at >= ? AND sold_at < ? AND paid_amount > 0 AND COALESCE(sale_type, 'cash') <> 'internal'
                 GROUP BY payment_method
                 ORDER BY COALESCE(SUM(paid_amount), 0) DESC, payment_method ASC
             ",
@@ -4408,39 +4667,76 @@ fn sales_report(
 
     let mut sales: Vec<ReportSaleRow> = Vec::new();
     if let Some(method) = &filter_method {
-        let mut sales_stmt = conn
-            .prepare(
-                "
-                SELECT
-                    s.id, s.sold_at, c.name, s.payment_method,
-                    s.total, s.paid_amount, s.balance_due, s.status
-                FROM sales s
-                LEFT JOIN customers c ON c.id = s.customer_id
-                WHERE s.sold_at >= ? AND s.sold_at < ? AND s.payment_method = ?
-                ORDER BY s.sold_at DESC, s.id DESC
-                LIMIT ?
-            ",
-            )
-            .map_err(|e| db_error("No se pudo preparar ventas del reporte", e))?;
-        let sale_rows = sales_stmt
-            .query_map(
-                params![&start_ts, &end_ts, method, safe_sales_limit],
-                |row| {
-                    Ok(ReportSaleRow {
-                        sale_id: row.get(0)?,
-                        sold_at: row.get(1)?,
-                        customer_name: row.get(2)?,
-                        payment_method: row.get(3)?,
-                        total: row.get(4)?,
-                        paid_amount: row.get(5)?,
-                        balance_due: row.get(6)?,
-                        status: row.get(7)?,
-                    })
-                },
-            )
-            .map_err(|e| db_error("No se pudo listar ventas del reporte", e))?;
-        for row in sale_rows {
-            sales.push(row.map_err(|e| db_error("No se pudo mapear venta del reporte", e))?);
+        if filter_internal_only {
+            let mut sales_stmt = conn
+                .prepare(
+                    "
+                    SELECT
+                        s.id, s.sold_at, c.name, s.payment_method,
+                        s.total, s.paid_amount, s.balance_due, s.status
+                    FROM sales s
+                    LEFT JOIN customers c ON c.id = s.customer_id
+                    WHERE s.sold_at >= ? AND s.sold_at < ? AND s.payment_method = ? AND COALESCE(s.sale_type, 'cash') = 'internal'
+                    ORDER BY s.sold_at DESC, s.id DESC
+                    LIMIT ?
+                ",
+                )
+                .map_err(|e| db_error("No se pudo preparar ventas del reporte", e))?;
+            let sale_rows = sales_stmt
+                .query_map(
+                    params![&start_ts, &end_ts, method, safe_sales_limit],
+                    |row| {
+                        Ok(ReportSaleRow {
+                            sale_id: row.get(0)?,
+                            sold_at: row.get(1)?,
+                            customer_name: row.get(2)?,
+                            payment_method: row.get(3)?,
+                            total: row.get(4)?,
+                            paid_amount: row.get(5)?,
+                            balance_due: row.get(6)?,
+                            status: row.get(7)?,
+                        })
+                    },
+                )
+                .map_err(|e| db_error("No se pudo listar ventas del reporte", e))?;
+            for row in sale_rows {
+                sales.push(row.map_err(|e| db_error("No se pudo mapear venta del reporte", e))?);
+            }
+        } else {
+            let mut sales_stmt = conn
+                .prepare(
+                    "
+                    SELECT
+                        s.id, s.sold_at, c.name, s.payment_method,
+                        s.total, s.paid_amount, s.balance_due, s.status
+                    FROM sales s
+                    LEFT JOIN customers c ON c.id = s.customer_id
+                    WHERE s.sold_at >= ? AND s.sold_at < ? AND s.payment_method = ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
+                    ORDER BY s.sold_at DESC, s.id DESC
+                    LIMIT ?
+                ",
+                )
+                .map_err(|e| db_error("No se pudo preparar ventas del reporte", e))?;
+            let sale_rows = sales_stmt
+                .query_map(
+                    params![&start_ts, &end_ts, method, safe_sales_limit],
+                    |row| {
+                        Ok(ReportSaleRow {
+                            sale_id: row.get(0)?,
+                            sold_at: row.get(1)?,
+                            customer_name: row.get(2)?,
+                            payment_method: row.get(3)?,
+                            total: row.get(4)?,
+                            paid_amount: row.get(5)?,
+                            balance_due: row.get(6)?,
+                            status: row.get(7)?,
+                        })
+                    },
+                )
+                .map_err(|e| db_error("No se pudo listar ventas del reporte", e))?;
+            for row in sale_rows {
+                sales.push(row.map_err(|e| db_error("No se pudo mapear venta del reporte", e))?);
+            }
         }
     } else {
         let mut sales_stmt = conn
@@ -4451,7 +4747,7 @@ fn sales_report(
                     s.total, s.paid_amount, s.balance_due, s.status
                 FROM sales s
                 LEFT JOIN customers c ON c.id = s.customer_id
-                WHERE s.sold_at >= ? AND s.sold_at < ?
+                WHERE s.sold_at >= ? AND s.sold_at < ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
                 ORDER BY s.sold_at DESC, s.id DESC
                 LIMIT ?
             ",
@@ -4478,41 +4774,82 @@ fn sales_report(
 
     let mut products: Vec<ReportProductRow> = Vec::new();
     if let Some(method) = &filter_method {
-        let mut products_stmt = conn
-            .prepare(
-                "
-                SELECT
-                    si.product_name,
-                    COALESCE(SUM(si.quantity), 0),
-                    COALESCE(SUM(si.subtotal), 0),
-                    COALESCE(SUM(si.cost_at_sale * si.quantity), 0),
-                    COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
-                FROM sale_items si
-                JOIN sales s ON s.id = si.sale_id
-                WHERE s.sold_at >= ? AND s.sold_at < ? AND s.payment_method = ?
-                GROUP BY si.product_name
-                HAVING COALESCE(SUM(si.quantity), 0) > 0
-                ORDER BY COALESCE(SUM(si.subtotal), 0) DESC, COALESCE(SUM(si.quantity), 0) DESC
-                LIMIT ?
-            ",
-            )
-            .map_err(|e| db_error("No se pudo preparar productos del reporte", e))?;
-        let product_rows = products_stmt
-            .query_map(
-                params![&start_ts, &end_ts, method, safe_products_limit],
-                |row| {
-                    Ok(ReportProductRow {
-                        product_name: row.get(0)?,
-                        quantity: row.get(1)?,
-                        revenue: row.get(2)?,
-                        cost_total: row.get(3)?,
-                        profit: row.get(4)?,
-                    })
-                },
-            )
-            .map_err(|e| db_error("No se pudo listar productos del reporte", e))?;
-        for row in product_rows {
-            products.push(row.map_err(|e| db_error("No se pudo mapear productos del reporte", e))?);
+        if filter_internal_only {
+            let mut products_stmt = conn
+                .prepare(
+                    "
+                    SELECT
+                        si.product_name,
+                        COALESCE(SUM(si.quantity), 0),
+                        COALESCE(SUM(si.subtotal), 0),
+                        COALESCE(SUM(si.cost_at_sale * si.quantity), 0),
+                        COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
+                    FROM sale_items si
+                    JOIN sales s ON s.id = si.sale_id
+                    WHERE s.sold_at >= ? AND s.sold_at < ? AND s.payment_method = ? AND COALESCE(s.sale_type, 'cash') = 'internal'
+                    GROUP BY si.product_name
+                    HAVING COALESCE(SUM(si.quantity), 0) > 0
+                    ORDER BY COALESCE(SUM(si.subtotal), 0) DESC, COALESCE(SUM(si.quantity), 0) DESC
+                    LIMIT ?
+                ",
+                )
+                .map_err(|e| db_error("No se pudo preparar productos del reporte", e))?;
+            let product_rows = products_stmt
+                .query_map(
+                    params![&start_ts, &end_ts, method, safe_products_limit],
+                    |row| {
+                        Ok(ReportProductRow {
+                            product_name: row.get(0)?,
+                            quantity: row.get(1)?,
+                            revenue: row.get(2)?,
+                            cost_total: row.get(3)?,
+                            profit: row.get(4)?,
+                        })
+                    },
+                )
+                .map_err(|e| db_error("No se pudo listar productos del reporte", e))?;
+            for row in product_rows {
+                products
+                    .push(row.map_err(|e| db_error("No se pudo mapear productos del reporte", e))?);
+            }
+        } else {
+            let mut products_stmt = conn
+                .prepare(
+                    "
+                    SELECT
+                        si.product_name,
+                        COALESCE(SUM(si.quantity), 0),
+                        COALESCE(SUM(si.subtotal), 0),
+                        COALESCE(SUM(si.cost_at_sale * si.quantity), 0),
+                        COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
+                    FROM sale_items si
+                    JOIN sales s ON s.id = si.sale_id
+                    WHERE s.sold_at >= ? AND s.sold_at < ? AND s.payment_method = ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
+                    GROUP BY si.product_name
+                    HAVING COALESCE(SUM(si.quantity), 0) > 0
+                    ORDER BY COALESCE(SUM(si.subtotal), 0) DESC, COALESCE(SUM(si.quantity), 0) DESC
+                    LIMIT ?
+                ",
+                )
+                .map_err(|e| db_error("No se pudo preparar productos del reporte", e))?;
+            let product_rows = products_stmt
+                .query_map(
+                    params![&start_ts, &end_ts, method, safe_products_limit],
+                    |row| {
+                        Ok(ReportProductRow {
+                            product_name: row.get(0)?,
+                            quantity: row.get(1)?,
+                            revenue: row.get(2)?,
+                            cost_total: row.get(3)?,
+                            profit: row.get(4)?,
+                        })
+                    },
+                )
+                .map_err(|e| db_error("No se pudo listar productos del reporte", e))?;
+            for row in product_rows {
+                products
+                    .push(row.map_err(|e| db_error("No se pudo mapear productos del reporte", e))?);
+            }
         }
     } else {
         let mut products_stmt = conn
@@ -4526,7 +4863,7 @@ fn sales_report(
                     COALESCE(SUM((si.unit_price - si.cost_at_sale) * si.quantity), 0)
                 FROM sale_items si
                 JOIN sales s ON s.id = si.sale_id
-                WHERE s.sold_at >= ? AND s.sold_at < ?
+                WHERE s.sold_at >= ? AND s.sold_at < ? AND COALESCE(s.sale_type, 'cash') <> 'internal'
                 GROUP BY si.product_name
                 HAVING COALESCE(SUM(si.quantity), 0) > 0
                 ORDER BY COALESCE(SUM(si.subtotal), 0) DESC, COALESCE(SUM(si.quantity), 0) DESC
@@ -4560,6 +4897,9 @@ fn sales_report(
             paid_total,
             due_total,
             estimated_profit,
+            internal_consumption_total,
+            internal_operations_count,
+            net_profit_after_internal,
             avg_ticket,
         },
         payment_breakdown,
@@ -4577,8 +4917,14 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
     let mut conn = open_db(&app)?;
     let _session = require_authenticated_user(&conn)?;
     let method = normalize_payment_method(&payload.payment_method)?;
+    let is_internal_consumption = method == "Consumo interno";
+    let customer_id = if is_internal_consumption {
+        None
+    } else {
+        payload.customer_id
+    };
 
-    if let Some(customer_id) = payload.customer_id {
+    if let Some(customer_id) = customer_id {
         let active: Option<i64> = conn
             .query_row(
                 "SELECT active FROM customers WHERE id = ?",
@@ -4617,7 +4963,7 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
             } else {
                 Some(clean_notes)
             },
-            payload.customer_id,
+            customer_id,
             "cash",
             0.0f64,
             0.0f64,
@@ -4630,7 +4976,8 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
 
     let mut total: f64 = 0.0;
     for item in &payload.items {
-        if item.quantity <= 0.0 {
+        let quantity = round_integer(item.quantity);
+        if quantity <= 0.0 {
             return Err("Las cantidades deben ser mayores a cero".to_string());
         }
 
@@ -4646,9 +4993,9 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, f64>(2)?,
-                        row.get::<_, f64>(3)?,
-                        row.get::<_, f64>(4)?,
+                        round_integer(row.get::<_, f64>(2)?),
+                        round_integer(row.get::<_, f64>(3)?),
+                        round_integer(row.get::<_, f64>(4)?),
                     ))
                 },
             )
@@ -4656,14 +5003,19 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
             .map_err(|e| db_error("No se pudo leer producto para venta", e))?
             .ok_or_else(|| "Producto no encontrado o inactivo".to_string())?;
 
-        let (product_id, product_name, stock_before, cost_at_sale, unit_price) = product;
-        let stock_after = stock_before - item.quantity;
+        let (product_id, product_name, stock_before, cost_at_sale, listed_unit_price) = product;
+        let stock_after = round_integer(stock_before - quantity);
         if stock_after < 0.0 {
             return Err(format!("Stock insuficiente para {product_name}"));
         }
 
-        let subtotal = unit_price * item.quantity;
-        total += subtotal;
+        let unit_price = if is_internal_consumption {
+            cost_at_sale
+        } else {
+            listed_unit_price
+        };
+        let subtotal = round_integer(unit_price * quantity);
+        total = round_integer(total + subtotal);
 
         tx.execute(
             "UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -4682,7 +5034,7 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
                 sale_id,
                 product_id,
                 product_name,
-                item.quantity,
+                quantity,
                 unit_price,
                 subtotal,
                 cost_at_sale
@@ -4699,22 +5051,43 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
         ",
             params![
                 product_id,
-                "sale",
-                -item.quantity,
+                if is_internal_consumption {
+                    "manual_out"
+                } else {
+                    "sale"
+                },
+                -quantity,
                 stock_before,
                 stock_after,
                 cost_at_sale,
-                "sale",
+                if is_internal_consumption {
+                    "internal_consumption"
+                } else {
+                    "sale"
+                },
                 sale_id,
-                "Venta POS"
+                if is_internal_consumption {
+                    "Consumo interno"
+                } else {
+                    "Venta POS"
+                }
             ],
         )
         .map_err(|e| db_error("No se pudo registrar movimiento de venta", e))?;
     }
 
-    let raw_paid = payload
-        .paid_amount
-        .unwrap_or_else(|| if method == "Deuda" { 0.0 } else { total });
+    let raw_paid = if is_internal_consumption {
+        if round_non_negative_integer(payload.paid_amount.unwrap_or(0.0)) > 0.0 {
+            return Err("Consumo interno no admite monto pagado".to_string());
+        }
+        0.0
+    } else {
+        round_integer(
+            payload
+                .paid_amount
+                .unwrap_or_else(|| if method == "Deuda" { 0.0 } else { total }),
+        )
+    };
     if raw_paid < 0.0 {
         return Err("El pago no puede ser negativo".to_string());
     }
@@ -4722,25 +5095,41 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
         return Err("El pago no puede superar el total".to_string());
     }
 
-    let balance_due = (total - raw_paid).max(0.0);
-    if balance_due > 1e-9 && payload.customer_id.is_none() {
+    let balance_due = if is_internal_consumption {
+        0.0
+    } else {
+        round_integer((total - raw_paid).max(0.0))
+    };
+    if balance_due > 1e-9 && customer_id.is_none() {
         return Err("Para pago parcial o deuda debes seleccionar un cliente".to_string());
     }
-    let due_date = if balance_due > 1e-9 {
+    let due_date = if is_internal_consumption {
+        None
+    } else if balance_due > 1e-9 {
         Some(parse_due_date_or_default(payload.due_date.clone())?)
     } else {
         None
     };
 
-    let sale_type = if balance_due > 1e-9 { "credit" } else { "cash" }.to_string();
-    let status = if balance_due <= 1e-9 {
+    let sale_type = if is_internal_consumption {
+        "internal".to_string()
+    } else if balance_due > 1e-9 {
+        "credit".to_string()
+    } else {
+        "cash".to_string()
+    };
+    let status = if is_internal_consumption {
+        "internal".to_string()
+    } else if balance_due <= 1e-9 {
         "paid".to_string()
     } else if raw_paid > 0.0 {
         "partial".to_string()
     } else {
         "credit".to_string()
     };
-    let sale_method = if method == "Deuda" && raw_paid > 1e-9 {
+    let sale_method = if is_internal_consumption {
+        "Consumo interno".to_string()
+    } else if method == "Deuda" && raw_paid > 1e-9 {
         "Efectivo".to_string()
     } else {
         method.clone()
@@ -4753,14 +5142,14 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
     .map_err(|e| db_error("No se pudo cerrar venta", e))?;
 
     let mut initial_payment_method: Option<String> = None;
-    if let Some(customer_id) = payload.customer_id {
+    if let Some(customer_id) = customer_id {
         if raw_paid > 0.0 {
             let selected = payload
                 .initial_payment_method
                 .as_deref()
                 .unwrap_or(payload.payment_method.as_str());
             let mut applied = normalize_payment_method(selected)?;
-            if applied == "Deuda" {
+            if applied == "Deuda" || applied == "Consumo interno" {
                 applied = "Efectivo".to_string();
             }
             tx.execute(
@@ -4794,7 +5183,7 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
         total,
         payment_method: sale_method,
         sale_type,
-        customer_id: payload.customer_id,
+        customer_id,
         paid_amount: raw_paid,
         balance_due,
         due_date,

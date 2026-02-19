@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { listPaymentMethods, salesReport } from "../tauri";
 import { PaymentMethod, SalesReportResponse } from "../types";
+import { formatInteger, formatMoney, roundInteger } from "../utils/number";
 
 const FALLBACK_PAYMENT_METHODS: PaymentMethod[] = [
   "Efectivo",
@@ -9,17 +10,8 @@ const FALLBACK_PAYMENT_METHODS: PaymentMethod[] = [
   "Debito",
   "Transferencia",
   "Deuda",
+  "Consumo interno",
 ];
-
-const moneyFormatter = new Intl.NumberFormat("es-AR", {
-  style: "currency",
-  currency: "ARS",
-  maximumFractionDigits: 2,
-});
-
-const integerFormatter = new Intl.NumberFormat("es-AR", {
-  maximumFractionDigits: 0,
-});
 
 function localDateInputValue(date: Date): string {
   const year = date.getFullYear();
@@ -80,17 +72,20 @@ function buildReportCsv(report: SalesReportResponse): string {
   lines.push(`Hasta,${escapeCsv(report.toDate)}`);
   lines.push(`Metodo filtro,${escapeCsv(report.paymentMethod ?? "Todos")}`);
   lines.push(`Cantidad ventas,${report.summary.salesCount}`);
-  lines.push(`Total vendido,${report.summary.grossTotal.toFixed(2)}`);
-  lines.push(`Cobrado,${report.summary.paidTotal.toFixed(2)}`);
-  lines.push(`Deuda pendiente,${report.summary.dueTotal.toFixed(2)}`);
-  lines.push(`Ganancia estimada,${report.summary.estimatedProfit.toFixed(2)}`);
-  lines.push(`Ticket promedio,${report.summary.avgTicket.toFixed(2)}`);
+  lines.push(`Total vendido,${roundInteger(report.summary.grossTotal)}`);
+  lines.push(`Cobrado,${roundInteger(report.summary.paidTotal)}`);
+  lines.push(`Deuda pendiente,${roundInteger(report.summary.dueTotal)}`);
+  lines.push(`Ganancia estimada,${roundInteger(report.summary.estimatedProfit)}`);
+  lines.push(`Consumo interno,${roundInteger(report.summary.internalConsumptionTotal)}`);
+  lines.push(`Movimientos consumo interno,${report.summary.internalOperationsCount}`);
+  lines.push(`Resultado neto,${roundInteger(report.summary.netProfitAfterInternal)}`);
+  lines.push(`Ticket promedio,${roundInteger(report.summary.avgTicket)}`);
   lines.push("");
 
   lines.push("Desglose por metodo");
   lines.push("Metodo,Total");
   for (const payment of report.paymentBreakdown) {
-    lines.push(`${escapeCsv(payment.paymentMethod)},${payment.total.toFixed(2)}`);
+    lines.push(`${escapeCsv(payment.paymentMethod)},${roundInteger(payment.total)}`);
   }
   lines.push("");
 
@@ -103,9 +98,9 @@ function buildReportCsv(report: SalesReportResponse): string {
         escapeCsv(sale.soldAt),
         escapeCsv(sale.customerName ?? ""),
         escapeCsv(sale.paymentMethod),
-        sale.total.toFixed(2),
-        sale.paidAmount.toFixed(2),
-        sale.balanceDue.toFixed(2),
+        roundInteger(sale.total),
+        roundInteger(sale.paidAmount),
+        roundInteger(sale.balanceDue),
         escapeCsv(sale.status),
       ].join(","),
     );
@@ -118,10 +113,10 @@ function buildReportCsv(report: SalesReportResponse): string {
     lines.push(
       [
         escapeCsv(product.productName),
-        product.quantity.toFixed(2),
-        product.revenue.toFixed(2),
-        product.costTotal.toFixed(2),
-        product.profit.toFixed(2),
+        roundInteger(product.quantity),
+        roundInteger(product.revenue),
+        roundInteger(product.costTotal),
+        roundInteger(product.profit),
       ].join(","),
     );
   }
@@ -246,23 +241,36 @@ export function ReportsPage() {
       <div className="reports-kpis">
         <article className="panel kpi-card">
           <span>Ventas</span>
-          <strong>{integerFormatter.format(report?.summary.salesCount ?? 0)}</strong>
+          <strong>{formatInteger(report?.summary.salesCount ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Total vendido</span>
-          <strong>{moneyFormatter.format(report?.summary.grossTotal ?? 0)}</strong>
+          <strong>{formatMoney(report?.summary.grossTotal ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Cobrado</span>
-          <strong>{moneyFormatter.format(report?.summary.paidTotal ?? 0)}</strong>
+          <strong>{formatMoney(report?.summary.paidTotal ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Deuda pendiente</span>
-          <strong>{moneyFormatter.format(report?.summary.dueTotal ?? 0)}</strong>
+          <strong>{formatMoney(report?.summary.dueTotal ?? 0)}</strong>
+        </article>
+        <article className="panel kpi-card">
+          <span>Ganancia estimada</span>
+          <strong>{formatMoney(report?.summary.estimatedProfit ?? 0)}</strong>
+        </article>
+        <article className="panel kpi-card">
+          <span>Consumo interno</span>
+          <strong>{formatMoney(report?.summary.internalConsumptionTotal ?? 0)}</strong>
+          <small>{`${formatInteger(report?.summary.internalOperationsCount ?? 0)} mov.`}</small>
+        </article>
+        <article className="panel kpi-card">
+          <span>Resultado neto</span>
+          <strong>{formatMoney(report?.summary.netProfitAfterInternal ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Ticket promedio</span>
-          <strong>{moneyFormatter.format(report?.summary.avgTicket ?? 0)}</strong>
+          <strong>{formatMoney(report?.summary.avgTicket ?? 0)}</strong>
         </article>
       </div>
 
@@ -282,7 +290,7 @@ export function ReportsPage() {
                       style={{ width: `${Math.max((item.total / maxPaymentTotal) * 100, 3)}%` }}
                     />
                   </div>
-                  <strong>{moneyFormatter.format(item.total)}</strong>
+                  <strong>{formatMoney(item.total)}</strong>
                 </div>
               ))
             )}
@@ -313,10 +321,10 @@ export function ReportsPage() {
                   report.products.map((item) => (
                     <tr key={`report-prod-${item.productName}`}>
                       <td>{item.productName}</td>
-                      <td>{item.quantity.toFixed(2)}</td>
-                      <td>{moneyFormatter.format(item.revenue)}</td>
-                      <td>{moneyFormatter.format(item.costTotal)}</td>
-                      <td>{moneyFormatter.format(item.profit)}</td>
+                      <td>{formatInteger(item.quantity)}</td>
+                      <td>{formatMoney(item.revenue)}</td>
+                      <td>{formatMoney(item.costTotal)}</td>
+                      <td>{formatMoney(item.profit)}</td>
                     </tr>
                   ))
                 )}
@@ -355,9 +363,9 @@ export function ReportsPage() {
                       <td>{formatDateTime(sale.soldAt)}</td>
                       <td>{sale.customerName || "Consumidor final"}</td>
                       <td>{sale.paymentMethod}</td>
-                      <td>{moneyFormatter.format(sale.total)}</td>
-                      <td>{moneyFormatter.format(sale.paidAmount)}</td>
-                      <td>{moneyFormatter.format(sale.balanceDue)}</td>
+                      <td>{formatMoney(sale.total)}</td>
+                      <td>{formatMoney(sale.paidAmount)}</td>
+                      <td>{formatMoney(sale.balanceDue)}</td>
                       <td>{sale.status}</td>
                     </tr>
                   ))

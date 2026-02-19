@@ -1,7 +1,7 @@
 {
   "name": "venta-tauri",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,3 +25,4 @@
     "vite": "^5.4.0"
   }
 }
+

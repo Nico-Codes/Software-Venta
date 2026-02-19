@@ -8,6 +8,7 @@ import {
   quickStockAddByBarcode,
 } from "../tauri";
 import { CategorySummary, StockMovementSummary } from "../types";
+import { formatInteger, parseIntegerInput } from "../utils/number";
 
 type Notice = {
   tone: "ok" | "error" | "info";
@@ -47,11 +48,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function parseDecimal(raw: string): number {
-  const parsed = Number.parseFloat(raw.replace(",", "."));
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-  return parsed;
+  return parseIntegerInput(raw);
 }
 
 function formatMovementDate(value: string): string {
@@ -68,6 +65,9 @@ function formatMovementDate(value: string): string {
 function movementLabel(type: string): string {
   if (type === "manual_in") {
     return "Entrada";
+  }
+  if (type === "manual_out") {
+    return "Salida";
   }
   if (type === "sale") {
     return "Venta";
@@ -166,7 +166,7 @@ export function QuickStockPage() {
         setCreateForm({
           ...EMPTY_CREATE_FORM,
           barcode: cleanBarcode,
-          stock: quantity.toFixed(2),
+          stock: formatInteger(quantity),
           categoryId: categories[0] ? String(categories[0].id) : "",
         });
         setCreateFormOpen(true);
@@ -264,113 +264,107 @@ export function QuickStockPage() {
     void handleAddStock();
   }
 
+  function handleFastInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void handleAddStock();
+  }
+
   return (
-    <div className="view-grid stock-view-grid">
-      <section className="panel feature-panel">
-        <header className="panel-header-row">
-          <div>
-            <h2>Agregar stock rapido</h2>
-            <p>Escaneas codigo, indicas cantidad y queda el movimiento auditado.</p>
-          </div>
+    <section className="panel quick-stock-panel">
+      <header className="panel-header-row">
+        <div>
+          <h2>Agregar stock rapido</h2>
+          <p>Escanea, confirma cantidad y guarda en segundos.</p>
+        </div>
+        <div className="quick-stock-header-tools">
           <span className="chip chip-secondary">
             <Icon name="stock" size={16} />
             Reposicion
           </span>
-        </header>
-
-        {notice && (
-          <div className={`notice-strip notice-${notice.tone}`}>
-            <span>{notice.text}</span>
-          </div>
-        )}
-
-        <div className="stock-toolbar">
-          <label className="field field-scan">
-            <span>Codigo de barras</span>
-            <input
-              ref={barcodeInputRef}
-              value={barcodeInput}
-              onChange={(event) => setBarcodeInput(event.target.value)}
-              onKeyDown={handleBarcodeKeyDown}
-              placeholder="Escanear producto"
-              autoComplete="off"
-            />
-          </label>
-
-          <label className="field field-qty">
-            <span>Cantidad</span>
-            <input
-              type="number"
-              min={1}
-              step="0.01"
-              value={quantityInput}
-              onChange={(event) => setQuantityInput(event.target.value)}
-            />
-          </label>
-
-          <label className="field">
-            <span>Nota</span>
-            <input
-              value={noteInput}
-              onChange={(event) => setNoteInput(event.target.value)}
-              placeholder="Compra, ajuste, etc."
-            />
-          </label>
-
-          <button type="button" onClick={handleAddStock} disabled={addingStock || loadingBoot}>
-            {addingStock ? "Guardando..." : "Agregar stock"}
+          <button
+            type="button"
+            className="button-soft button-xs"
+            onClick={() => void refreshMovements()}
+            disabled={loadingBoot || loadingMovement}
+          >
+            {loadingMovement ? "Actualizando..." : "Actualizar"}
           </button>
         </div>
+      </header>
 
-        <div className="table-shell">
-          <table>
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Producto</th>
-                <th>Tipo</th>
-                <th>Cantidad</th>
-                <th>Antes</th>
-                <th>Despues</th>
-              </tr>
-            </thead>
-            <tbody>
-              {movements.length <= 0 ? (
-                <tr>
-                  <td colSpan={6} className="table-empty">
-                    {loadingMovement ? "Cargando movimientos..." : "Sin movimientos recientes."}
-                  </td>
-                </tr>
-              ) : (
-                movements.map((movement) => (
-                  <tr key={movement.id}>
-                    <td>{formatMovementDate(movement.createdAt)}</td>
-                    <td>{movement.productName}</td>
-                    <td>{movementLabel(movement.movementType)}</td>
-                    <td>{movement.quantity.toFixed(2)}</td>
-                    <td>{movement.stockBefore.toFixed(2)}</td>
-                    <td>{movement.stockAfter.toFixed(2)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      {notice && (
+        <div className={`notice-strip notice-${notice.tone}`}>
+          <span>{notice.text}</span>
         </div>
-      </section>
+      )}
 
-      <aside className="panel notes-panel">
-        <h3>Alta completa</h3>
-        <p>Si el codigo no existe, crea el producto sin salir del flujo rapido.</p>
+      <div className="quick-stock-fastbar">
+        <label className="field field-scan quick-stock-barcode">
+          <span>Codigo de barras</span>
+          <input
+            ref={barcodeInputRef}
+            value={barcodeInput}
+            onChange={(event) => setBarcodeInput(event.target.value)}
+            onKeyDown={handleBarcodeKeyDown}
+            placeholder="Escanear producto"
+            autoComplete="off"
+          />
+        </label>
 
-        {!createFormOpen ? (
-          <ul>
-            <li>Escaneas codigo y cantidad.</li>
-            <li>Si no existe, se habilita alta completa.</li>
-            <li>Con stock inicial obligatorio mayor a cero.</li>
-          </ul>
-        ) : (
-          <div className="create-product-form">
-            <label className="field">
+        <label className="field field-qty quick-stock-quantity">
+          <span>Cantidad</span>
+          <input
+            type="number"
+            min={1}
+            step="1"
+            value={quantityInput}
+            onChange={(event) => setQuantityInput(event.target.value)}
+            onKeyDown={handleFastInputKeyDown}
+          />
+        </label>
+
+        <button
+          type="button"
+          className="quick-stock-submit"
+          onClick={handleAddStock}
+          disabled={addingStock || loadingBoot}
+        >
+          {addingStock ? "Guardando..." : "Agregar stock"}
+        </button>
+      </div>
+
+      <div className="quick-stock-meta">
+        <label className="field quick-stock-note">
+          <span>Nota opcional</span>
+          <input
+            value={noteInput}
+            onChange={(event) => setNoteInput(event.target.value)}
+            onKeyDown={handleFastInputKeyDown}
+            placeholder="Compra, ajuste, etc."
+          />
+        </label>
+
+        <button
+          type="button"
+          className="button-soft quick-stock-toggle-create"
+          onClick={() => setCreateFormOpen((prev) => !prev)}
+        >
+          {createFormOpen ? "Ocultar alta completa" : "Alta completa"}
+        </button>
+      </div>
+
+      {createFormOpen && (
+        <section className="quick-stock-create">
+          <header className="quick-stock-create-header">
+            <h3>Alta completa de producto</h3>
+            <p>Usa este bloque solo cuando el codigo no existe.</p>
+          </header>
+
+          <div className="quick-stock-create-grid">
+            <label className="field create-col-2">
               <span>Nombre</span>
               <input
                 value={createForm.name}
@@ -404,72 +398,123 @@ export function QuickStockPage() {
               </div>
             </label>
 
-            <div className="split-grid">
-              <label className="field">
-                <span>Costo</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={createForm.cost}
-                  onChange={(event) => setCreateForm((prev) => ({ ...prev, cost: event.target.value }))}
-                />
-              </label>
-              <label className="field">
-                <span>Precio venta</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={createForm.salePrice}
-                  onChange={(event) => setCreateForm((prev) => ({ ...prev, salePrice: event.target.value }))}
-                />
-              </label>
-            </div>
-
-            <div className="split-grid">
-              <label className="field">
-                <span>Stock inicial</span>
-                <input
-                  type="number"
-                  min={1}
-                  step="0.01"
-                  value={createForm.stock}
-                  onChange={(event) => setCreateForm((prev) => ({ ...prev, stock: event.target.value }))}
-                />
-              </label>
-              <label className="field">
-                <span>Stock minimo</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={createForm.minStock}
-                  onChange={(event) => setCreateForm((prev) => ({ ...prev, minStock: event.target.value }))}
-                />
-              </label>
-            </div>
-
-            <label className="switch-row">
+            <label className="field">
+              <span>Costo</span>
               <input
-                type="checkbox"
-                checked={createForm.autoPrice}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, autoPrice: event.target.checked }))}
+                type="number"
+                min={0}
+                step="1"
+                value={createForm.cost}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, cost: event.target.value }))}
               />
-              <span>Calcular precio automatico por margen</span>
             </label>
 
-            <div className="action-row">
-              <button type="button" className="button-soft" onClick={() => setCreateFormOpen(false)} disabled={creatingProduct}>
-                Cancelar
-              </button>
-              <button type="button" onClick={handleCreateProduct} disabled={creatingProduct || categories.length <= 0}>
-                {creatingProduct ? "Creando..." : "Crear producto"}
-              </button>
-            </div>
+            <label className="field">
+              <span>Precio venta</span>
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={createForm.salePrice}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, salePrice: event.target.value }))}
+              />
+            </label>
+
+            <label className="field">
+              <span>Stock inicial</span>
+              <input
+                type="number"
+                min={1}
+                step="1"
+                value={createForm.stock}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, stock: event.target.value }))}
+              />
+            </label>
+
+            <label className="field">
+              <span>Stock minimo</span>
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={createForm.minStock}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, minStock: event.target.value }))}
+              />
+            </label>
           </div>
-        )}
-      </aside>
-    </div>
+
+          <label className="switch-row quick-stock-create-switch">
+            <input
+              type="checkbox"
+              checked={createForm.autoPrice}
+              onChange={(event) => setCreateForm((prev) => ({ ...prev, autoPrice: event.target.checked }))}
+            />
+            <span>Calcular precio automatico por margen</span>
+          </label>
+
+          {categories.length <= 0 && (
+            <div className="notice-strip notice-info">
+              <span>Necesitas al menos una categoria para crear productos.</span>
+            </div>
+          )}
+
+          <div className="action-row quick-stock-create-actions">
+            <button
+              type="button"
+              className="button-soft"
+              onClick={() => setCreateFormOpen(false)}
+              disabled={creatingProduct}
+            >
+              Cancelar
+            </button>
+            <button type="button" onClick={handleCreateProduct} disabled={creatingProduct || categories.length <= 0}>
+              {creatingProduct ? "Creando..." : "Crear producto"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      <section className="quick-stock-movements">
+        <div className="quick-stock-movements-header">
+          <h3>Movimientos recientes</h3>
+          <span>{movements.length} registro(s)</span>
+        </div>
+
+        <div className="table-shell quick-stock-table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Producto</th>
+                <th>Tipo</th>
+                <th>Cantidad</th>
+                <th>Antes</th>
+                <th>Despues</th>
+              </tr>
+            </thead>
+            <tbody>
+              {movements.length <= 0 ? (
+                <tr>
+                  <td colSpan={6} className="table-empty">
+                    {loadingMovement ? "Cargando movimientos..." : "Sin movimientos recientes."}
+                  </td>
+                </tr>
+              ) : (
+                movements.map((movement) => (
+                  <tr key={movement.id}>
+                    <td>{formatMovementDate(movement.createdAt)}</td>
+                    <td>{movement.productName}</td>
+                    <td>{movementLabel(movement.movementType)}</td>
+                    <td>{formatInteger(movement.quantity)}</td>
+                    <td>{formatInteger(movement.stockBefore)}</td>
+                    <td>{formatInteger(movement.stockAfter)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
   );
 }

@@ -450,6 +450,117 @@ body {
   grid-template-columns: minmax(0, 1fr) 110px minmax(0, 1fr) auto;
 }
 
+.quick-stock-panel {
+  display: grid;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  align-content: start;
+}
+
+.quick-stock-header-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-stock-fastbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.quick-stock-quantity input {
+  text-align: center;
+  font-weight: 600;
+}
+
+.quick-stock-submit {
+  min-width: 150px;
+  padding-inline: 14px;
+}
+
+.quick-stock-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.quick-stock-toggle-create {
+  min-width: 180px;
+}
+
+.quick-stock-create {
+  border: 1px solid #d7e8f8;
+  border-radius: 14px;
+  background: #f8fbff;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.quick-stock-create-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.quick-stock-create-header p {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.quick-stock-create-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-stock-create-grid .create-col-2 {
+  grid-column: span 2;
+}
+
+.quick-stock-create-switch {
+  margin-top: -2px;
+}
+
+.quick-stock-create-actions {
+  justify-content: flex-end;
+}
+
+.quick-stock-movements {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.quick-stock-movements-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quick-stock-movements-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.quick-stock-movements-header span {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.quick-stock-table-shell {
+  max-height: 360px;
+  overflow: auto;
+}
+
 .catalog-list {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -873,6 +984,11 @@ tbody tr:hover {
   color: var(--ink-0);
   font-size: 22px;
   line-height: 1.15;
+}
+
+.kpi-card small {
+  color: var(--ink-2);
+  font-size: 11px;
 }
 
 .dashboard-panels {
@@ -1751,6 +1867,12 @@ tbody tr:hover {
   background: #eaf3ff;
 }
 
+.sale-cart-table tbody tr:focus-visible {
+  outline: 2px solid #78a9de;
+  outline-offset: -2px;
+  background: #eef6ff;
+}
+
 .touch-mode button {
   min-height: 40px;
 }
@@ -2038,6 +2160,10 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  .quick-stock-create-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .catalog-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2103,6 +2229,22 @@ tbody tr:hover {
   .sale-fastbar,
   .stock-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .quick-stock-fastbar,
+  .quick-stock-meta,
+  .quick-stock-create-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-stock-toggle-create,
+  .quick-stock-submit {
+    width: 100%;
+  }
+
+  .quick-stock-header-tools {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .topbar {

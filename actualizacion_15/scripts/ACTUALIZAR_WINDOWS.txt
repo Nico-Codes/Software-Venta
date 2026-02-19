@@ -1,0 +1,22 @@
+﻿BUEN TRAGO - Actualizacion Windows
+
+Escenario:
+- Proyecto local: C:\Software Venta
+- Carpeta de actualizacion en pendrive: X:\Software Venta\actualizacion_15
+
+Instalacion directa (recomendada):
+1) Abrir carpeta:
+   X:\Software Venta\actualizacion_15\installador_windows
+2) Ejecutar:
+   BUEN TRAGO_*_x64-setup.exe
+3) Seguir asistente (Siguiente -> Instalar -> Finalizar)
+
+Alternativa MSI:
+1) Abrir PowerShell como Administrador
+2) Ejecutar:
+   msiexec /i "X:\Software Venta\actualizacion_15\installador_windows\BUEN TRAGO_*_x64_en-US.msi"
+
+Notas:
+- Los datos SQLite ya existentes se mantienen.
+- Esta actualizacion esta enfocada unicamente en Windows.
+

@@ -1,7 +1,7 @@
 [package]
 name = "venta_tauri"
-version = "1.0.0"
-description = "ALTO TRAGO - Sistema de gestion para vinoteca"
+version = "1.0.5"
+description = "BUEN TRAGO - Sistema de gestion para vinoteca"
 authors = ["Software Venta"]
 edition = "2021"
 
@@ -17,3 +17,4 @@ chrono = { version = "0.4", default-features = true, features = ["clock"] }
 pbkdf2 = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+

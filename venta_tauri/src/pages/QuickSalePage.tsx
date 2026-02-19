@@ -18,6 +18,12 @@ import {
   ProductSummary,
   SaleTicketResponse,
 } from "../types";
+import {
+  formatInteger,
+  formatMoney,
+  parseIntegerInput,
+  roundInteger,
+} from "../utils/number";
 
 type CartItem = ProductSummary & {
   qty: number;
@@ -39,13 +45,8 @@ const FALLBACK_METHODS: PaymentMethod[] = [
   "Debito",
   "Transferencia",
   "Deuda",
+  "Consumo interno",
 ];
-
-const moneyFormatter = new Intl.NumberFormat("es-AR", {
-  style: "currency",
-  currency: "ARS",
-  maximumFractionDigits: 2,
-});
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -62,11 +63,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function normalizeNumberInput(raw: string): number {
-  const parsed = Number.parseFloat(raw.replace(",", "."));
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-  return parsed;
+  return parseIntegerInput(raw);
 }
 
 function defaultDueDateInput(): string {
@@ -82,9 +79,9 @@ function resolvePaidAmount(
   total: number,
 ): number {
   if (!partialEnabled) {
-    return paymentMethod === "Deuda" ? 0 : total;
+    return paymentMethod === "Deuda" || paymentMethod === "Consumo interno" ? 0 : total;
   }
-  return clamp(normalizeNumberInput(partialRaw), 0, total);
+  return roundInteger(clamp(normalizeNumberInput(partialRaw), 0, total));
 }
 
 function printTicket(ticket: SaleTicketResponse) {
@@ -123,15 +120,27 @@ function toProductFromFavorite(row: FavoriteProductRow): ProductSummary {
 }
 
 function formatQty(value: number): string {
-  if (Number.isInteger(value)) {
-    return String(value);
+  return formatInteger(value);
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
   }
-  return value.toFixed(2);
+  const tag = target.tagName.toLowerCase();
+  if (tag === "input" || tag === "select" || tag === "textarea") {
+    return true;
+  }
+  return Boolean(target.closest("input, select, textarea, [contenteditable='true']"));
 }
 
 export function QuickSalePage() {
   const barcodeInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const customerSelectRef = useRef<HTMLSelectElement | null>(null);
+  const paymentSelectRef = useRef<HTMLSelectElement | null>(null);
+  const partialPaidInputRef = useRef<HTMLInputElement | null>(null);
+  const dueDateInputRef = useRef<HTMLInputElement | null>(null);
 
   const [barcodeInput, setBarcodeInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -154,7 +163,7 @@ export function QuickSalePage() {
   const [notice, setNotice] = useState<Notice | null>(null);
 
   const total = useMemo(
-    () => cart.reduce((acc, item) => acc + item.qty * item.salePrice, 0),
+    () => roundInteger(cart.reduce((acc, item) => acc + item.qty * item.salePrice, 0)),
     [cart],
   );
 
@@ -163,7 +172,12 @@ export function QuickSalePage() {
     [partialEnabled, partialPaidInput, paymentMethod, total],
   );
 
-  const debtAmount = useMemo(() => Math.max(total - paidAmount, 0), [paidAmount, total]);
+  const debtAmount = useMemo(() => {
+    if (paymentMethod === "Consumo interno") {
+      return 0;
+    }
+    return Math.max(total - paidAmount, 0);
+  }, [paidAmount, paymentMethod, total]);
 
   const selectedCustomer = useMemo(
     () => customers.find((customer) => String(customer.id) === selectedCustomerId) ?? null,
@@ -257,17 +271,122 @@ export function QuickSalePage() {
 
   useEffect(() => {
     if (!partialEnabled) {
-      setPartialPaidInput((paymentMethod === "Deuda" ? 0 : total).toFixed(2));
+      setPartialPaidInput(
+        formatInteger(paymentMethod === "Deuda" || paymentMethod === "Consumo interno" ? 0 : total),
+      );
       return;
     }
     const current = normalizeNumberInput(partialPaidInput);
     if (current > total) {
-      setPartialPaidInput(total.toFixed(2));
+      setPartialPaidInput(formatInteger(total));
     }
   }, [partialEnabled, paymentMethod, partialPaidInput, total]);
 
+  useEffect(() => {
+    if (paymentMethod !== "Consumo interno") {
+      return;
+    }
+    if (partialEnabled) {
+      setPartialEnabled(false);
+    }
+    setPartialPaidInput("0");
+    setSelectedCustomerId("");
+  }, [partialEnabled, paymentMethod]);
+
   function focusScanner() {
     barcodeInputRef.current?.focus();
+  }
+
+  function focusSearch() {
+    searchInputRef.current?.focus();
+  }
+
+  function focusPartialAmount() {
+    partialPaidInputRef.current?.focus();
+    partialPaidInputRef.current?.select();
+  }
+
+  function focusDueDate() {
+    dueDateInputRef.current?.focus();
+  }
+
+  function cyclePaymentMethod(step: 1 | -1) {
+    if (paymentMethods.length <= 0) {
+      return;
+    }
+    const currentIndex = paymentMethods.indexOf(paymentMethod);
+    const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = (baseIndex + step + paymentMethods.length) % paymentMethods.length;
+    setPaymentMethod(paymentMethods[nextIndex]);
+  }
+
+  function setPaymentMethodByIndex(index: number) {
+    const method = FALLBACK_METHODS[index];
+    if (!method) {
+      return;
+    }
+    if (!paymentMethods.includes(method)) {
+      return;
+    }
+    setPaymentMethod(method);
+  }
+
+  function cycleCustomer(step: 1 | -1) {
+    const options = ["", ...customers.map((customer) => String(customer.id))];
+    if (options.length <= 0) {
+      return;
+    }
+    const currentIndex = options.indexOf(selectedCustomerId);
+    const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = (baseIndex + step + options.length) % options.length;
+    setSelectedCustomerId(options[nextIndex]);
+  }
+
+  function selectCartByOffset(step: 1 | -1) {
+    if (cart.length <= 0) {
+      return;
+    }
+    const ids = cart.map((item) => item.id);
+    const currentIndex = selectedCartProductId !== null ? ids.indexOf(selectedCartProductId) : -1;
+    const baseIndex = currentIndex >= 0 ? currentIndex : step > 0 ? -1 : 0;
+    const nextIndex = (baseIndex + step + ids.length) % ids.length;
+    setSelectedCartProductId(ids[nextIndex]);
+  }
+
+  function removeSelectedCartItem() {
+    if (selectedCartProductId === null) {
+      return;
+    }
+    const item = cart.find((row) => row.id === selectedCartProductId);
+    if (!item) {
+      return;
+    }
+    updateQuantity(item.id, -item.qty);
+  }
+
+  function enablePartialAndFocus() {
+    if (paymentMethod === "Consumo interno") {
+      return;
+    }
+    if (!partialEnabled) {
+      setPartialEnabled(true);
+      setPartialPaidInput(formatInteger(total));
+    }
+    requestAnimationFrame(() => {
+      focusPartialAmount();
+    });
+  }
+
+  function togglePartialMode() {
+    if (paymentMethod === "Consumo interno") {
+      return;
+    }
+    if (partialEnabled) {
+      setPartialEnabled(false);
+      focusScanner();
+      return;
+    }
+    enablePartialAndFocus();
   }
 
   function clearCart() {
@@ -280,7 +399,8 @@ export function QuickSalePage() {
   function addProductToCart(product: ProductSummary) {
     let blockedReason = "";
     setCart((current) => {
-      const safeStock = Math.max(product.stock, 0);
+      const safeStock = Math.max(roundInteger(product.stock), 0);
+      const roundedPrice = roundInteger(product.salePrice);
       if (safeStock <= 0) {
         blockedReason = `${product.name} no tiene stock disponible.`;
         return current;
@@ -288,7 +408,7 @@ export function QuickSalePage() {
 
       const index = current.findIndex((item) => item.id === product.id);
       if (index < 0) {
-        return [...current, { ...product, qty: 1 }];
+        return [...current, { ...product, qty: 1, stock: safeStock, salePrice: roundedPrice }];
       }
 
       const next = [...current];
@@ -300,8 +420,8 @@ export function QuickSalePage() {
 
       next[index] = {
         ...target,
-        stock: product.stock,
-        salePrice: product.salePrice,
+        stock: safeStock,
+        salePrice: roundedPrice,
         qty: target.qty + 1,
       };
       return next;
@@ -370,6 +490,15 @@ export function QuickSalePage() {
     await runProductSearch(searchTerm.trim() || undefined);
   }
 
+  function addFirstQuickPick() {
+    const first = quickPickRows[0];
+    if (!first) {
+      setNotice({ tone: "info", text: "No hay productos rapidos para agregar." });
+      return;
+    }
+    addProductToCart(first);
+  }
+
   async function handleToggleFavorite(product: ProductSummary, currentFavorite: boolean) {
     try {
       await setProductFavorite(product.id, !currentFavorite);
@@ -399,7 +528,8 @@ export function QuickSalePage() {
       setNotice({ tone: "error", text: "Agrega al menos un producto al carrito." });
       return;
     }
-    if (debtAmount > 0 && !selectedCustomerId) {
+    const isInternalConsumption = paymentMethod === "Consumo interno";
+    if (!isInternalConsumption && debtAmount > 0 && !selectedCustomerId) {
       setNotice({
         tone: "error",
         text: "Selecciona cliente para registrar deuda o pago parcial.",
@@ -415,20 +545,22 @@ export function QuickSalePage() {
           quantity: item.qty,
         })),
         paymentMethod,
-        customerId: selectedCustomerId ? Number.parseInt(selectedCustomerId, 10) : undefined,
+        customerId: !isInternalConsumption && selectedCustomerId ? Number.parseInt(selectedCustomerId, 10) : undefined,
         paidAmount,
-        initialPaymentMethod: paymentMethod,
-        dueDate: debtAmount > 0 ? dueDateInput : undefined,
+        initialPaymentMethod: !isInternalConsumption ? paymentMethod : undefined,
+        dueDate: !isInternalConsumption && debtAmount > 0 ? dueDateInput : undefined,
       };
       const result = await createSale(payload);
       setLastSaleId(result.saleId);
       const debtInfo =
         result.balanceDue > 0
-          ? ` Se registro deuda de ${moneyFormatter.format(result.balanceDue)}.`
+          ? ` Se registro deuda de ${formatMoney(result.balanceDue)}.`
           : "";
+      const internalInfo =
+        result.saleType === "internal" ? " Consumo interno registrado correctamente." : "";
       setNotice({
         tone: "ok",
-        text: `Venta #${result.saleId} guardada.${debtInfo}`,
+        text: `Venta #${result.saleId} guardada.${debtInfo}${internalInfo}`,
       });
       setCart([]);
       setSelectedCartProductId(null);
@@ -484,8 +616,42 @@ export function QuickSalePage() {
     void handleSearchClick();
   }
 
+  function handleCheckoutFieldKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void handleCheckout();
+  }
+
   useEffect(() => {
     function onGlobalKeyDown(event: globalThis.KeyboardEvent) {
+      const key = event.key;
+      const editableContext = isEditableTarget(event.target);
+      const forceShortcut =
+        key === "Escape" ||
+        key === "F2" ||
+        key === "F3" ||
+        key === "F4" ||
+        key === "F5" ||
+        key === "F6" ||
+        key === "F7" ||
+        key === "F8" ||
+        key === "F9" ||
+        key === "F10";
+      const altPaymentShortcut =
+        event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey && /^[1-6]$/.test(key);
+
+      if (editableContext && !forceShortcut && !altPaymentShortcut) {
+        return;
+      }
+
+      if (key === "Escape") {
+        event.preventDefault();
+        focusScanner();
+        return;
+      }
+
       if (event.key === "F2") {
         event.preventDefault();
         focusScanner();
@@ -493,7 +659,7 @@ export function QuickSalePage() {
       }
       if (event.key === "F3") {
         event.preventDefault();
-        searchInputRef.current?.focus();
+        focusSearch();
         return;
       }
       if (event.key === "F4") {
@@ -501,26 +667,98 @@ export function QuickSalePage() {
         void handleCheckout();
         return;
       }
+      if (event.key === "F5") {
+        event.preventDefault();
+        togglePartialMode();
+        return;
+      }
+      if (event.key === "F6") {
+        event.preventDefault();
+        cyclePaymentMethod(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (event.key === "F7") {
+        event.preventDefault();
+        cycleCustomer(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (event.key === "F8") {
+        event.preventDefault();
+        enablePartialAndFocus();
+        return;
+      }
+      if (event.key === "F9") {
+        if (debtAmount > 0) {
+          event.preventDefault();
+          focusDueDate();
+        }
+        return;
+      }
+      if (event.key === "F10") {
+        event.preventDefault();
+        addFirstQuickPick();
+        return;
+      }
+      if (altPaymentShortcut) {
+        event.preventDefault();
+        const raw = Number.parseInt(key, 10);
+        if (!Number.isNaN(raw)) {
+          setPaymentMethodByIndex(raw - 1);
+        }
+        return;
+      }
       if (event.ctrlKey && (event.key === "l" || event.key === "L")) {
         event.preventDefault();
         clearCart();
         return;
       }
-      if (selectedCartProductId && (event.key === "+" || event.key === "=")) {
+
+      if (editableContext) {
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        selectCartByOffset(1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        selectCartByOffset(-1);
+        return;
+      }
+      if (selectedCartProductId && (event.key === "+" || event.key === "=" || event.key === "Add")) {
         event.preventDefault();
         updateQuantity(selectedCartProductId, 1);
         return;
       }
-      if (selectedCartProductId && event.key === "-") {
+      if (selectedCartProductId && (event.key === "-" || event.key === "Subtract")) {
         event.preventDefault();
         updateQuantity(selectedCartProductId, -1);
+        return;
+      }
+      if (selectedCartProductId && (event.key === "Delete" || event.key === "Backspace")) {
+        event.preventDefault();
+        removeSelectedCartItem();
       }
     }
     window.addEventListener("keydown", onGlobalKeyDown);
     return () => {
       window.removeEventListener("keydown", onGlobalKeyDown);
     };
-  }, [handleCheckout, selectedCartProductId]);
+  }, [
+    addFirstQuickPick,
+    cart,
+    customers,
+    debtAmount,
+    handleCheckout,
+    partialEnabled,
+    paymentMethod,
+    paymentMethods,
+    selectedCartProductId,
+    selectedCustomerId,
+    total,
+  ]);
 
   return (
     <div className="view-grid sale-view-grid sale-view-simple">
@@ -592,9 +830,9 @@ export function QuickSalePage() {
               quickPickRows.map((product) => (
                 <article key={`${product.source}-${product.id}`} className="catalog-card">
                   <button type="button" className="catalog-item" onClick={() => addProductToCart(product)}>
-                    <strong>{product.name}</strong>
-                    <small>
-                      {moneyFormatter.format(product.salePrice)} | Stock {formatQty(product.stock)}
+                      <strong>{product.name}</strong>
+                      <small>
+                      {formatMoney(product.salePrice)} | Stock {formatQty(product.stock)}
                     </small>
                   </button>
                   <button
@@ -635,6 +873,29 @@ export function QuickSalePage() {
                     key={item.id}
                     className={selectedCartProductId === item.id ? "row-selected" : ""}
                     onClick={() => setSelectedCartProductId(item.id)}
+                    onFocus={() => setSelectedCartProductId(item.id)}
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedCartProductId(item.id);
+                        return;
+                      }
+                      if (event.key === "+" || event.key === "=" || event.key === "Add") {
+                        event.preventDefault();
+                        updateQuantity(item.id, 1);
+                        return;
+                      }
+                      if (event.key === "-" || event.key === "Subtract") {
+                        event.preventDefault();
+                        updateQuantity(item.id, -1);
+                        return;
+                      }
+                      if (event.key === "Delete" || event.key === "Backspace") {
+                        event.preventDefault();
+                        updateQuantity(item.id, -item.qty);
+                      }
+                    }}
                   >
                     <td>{item.name}</td>
                     <td>
@@ -648,8 +909,8 @@ export function QuickSalePage() {
                         </button>
                       </div>
                     </td>
-                    <td>{moneyFormatter.format(item.salePrice)}</td>
-                    <td>{moneyFormatter.format(item.qty * item.salePrice)}</td>
+                    <td>{formatMoney(item.salePrice)}</td>
+                    <td>{formatMoney(item.qty * item.salePrice)}</td>
                     <td>
                       <button
                         type="button"
@@ -673,7 +934,7 @@ export function QuickSalePage() {
 
         <div className="total-card">
           <span>Total</span>
-          <strong>{moneyFormatter.format(total)}</strong>
+          <strong>{formatMoney(total)}</strong>
         </div>
 
         <div className="checkout-inline-grid">
@@ -681,8 +942,10 @@ export function QuickSalePage() {
             <span>Cliente</span>
             <div className="select-wrap">
               <select
+                ref={customerSelectRef}
                 value={selectedCustomerId}
                 onChange={(event) => setSelectedCustomerId(event.target.value)}
+                disabled={paymentMethod === "Consumo interno"}
               >
                 <option value="">Consumidor final</option>
                 {customers.map((customer) => (
@@ -698,6 +961,7 @@ export function QuickSalePage() {
             <span>Metodo</span>
             <div className="select-wrap">
               <select
+                ref={paymentSelectRef}
                 value={paymentMethod}
                 onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}
               >
@@ -711,12 +975,18 @@ export function QuickSalePage() {
           </label>
         </div>
 
+        {paymentMethod === "Consumo interno" && (
+          <div className="notice-strip notice-info">
+            <span>Modo consumo interno: descuenta stock sin generar deuda ni ganancia.</span>
+          </div>
+        )}
+
         {selectedCustomer && (
           <div className={`customer-debt ${selectedCustomer.overLimit ? "over-limit" : ""}`}>
-            <span>Deuda actual: {moneyFormatter.format(selectedCustomer.debtTotal)}</span>
-            <small>Limite: {moneyFormatter.format(selectedCustomer.alertLimit)}</small>
+            <span>Deuda actual: {formatMoney(selectedCustomer.debtTotal)}</span>
+            <small>Limite: {formatMoney(selectedCustomer.alertLimit)}</small>
             {selectedCustomer.overdueSalesCount > 0 && (
-              <small>{`Vencida: ${moneyFormatter.format(selectedCustomer.overdueTotal)} (${selectedCustomer.overdueSalesCount} ventas)`}</small>
+              <small>{`Vencida: ${formatMoney(selectedCustomer.overdueTotal)} (${selectedCustomer.overdueSalesCount} ventas)`}</small>
             )}
           </div>
         )}
@@ -724,45 +994,54 @@ export function QuickSalePage() {
         <button
           type="button"
           className={`button-soft partial-toggle ${partialEnabled ? "active" : ""}`}
-          onClick={() => {
-            setPartialEnabled((current) => !current);
-            if (!partialEnabled) {
-              setPartialPaidInput(total.toFixed(2));
-            }
-          }}
+          onClick={togglePartialMode}
+          disabled={paymentMethod === "Consumo interno"}
         >
           {partialEnabled ? "Quitar pago parcial" : "Pago parcial"}
         </button>
 
-        <div className={`partial-panel ${partialEnabled ? "open" : ""}`}>
-          <label className="field">
-            <span>Abona ahora</span>
-            <input
-              type="number"
-              min={0}
-              max={total}
-              step="0.01"
-              value={partialPaidInput}
-              onChange={(event) => setPartialPaidInput(event.target.value)}
-            />
-          </label>
-        </div>
+        {paymentMethod !== "Consumo interno" && (
+          <div className={`partial-panel ${partialEnabled ? "open" : ""}`}>
+            <label className="field">
+              <span>Abona ahora</span>
+              <input
+                ref={partialPaidInputRef}
+                type="number"
+                min={0}
+                max={total}
+                step="1"
+                value={partialPaidInput}
+                onChange={(event) => setPartialPaidInput(event.target.value)}
+                onKeyDown={handleCheckoutFieldKeyDown}
+              />
+            </label>
+          </div>
+        )}
 
-        {debtAmount > 0 && (
+        {paymentMethod !== "Consumo interno" && debtAmount > 0 && (
           <label className="field">
             <span>Vence deuda</span>
             <input
+              ref={dueDateInputRef}
               type="date"
               value={dueDateInput}
               onChange={(event) => setDueDateInput(event.target.value)}
+              onKeyDown={handleCheckoutFieldKeyDown}
             />
           </label>
         )}
 
-        <div className={`debt-preview ${debtAmount > 0 ? "open" : ""}`}>
-          <span>A deuda</span>
-          <strong>{moneyFormatter.format(debtAmount)}</strong>
-        </div>
+        {paymentMethod === "Consumo interno" ? (
+          <div className="debt-preview open">
+            <span>Consumo interno</span>
+            <strong>{formatMoney(total)}</strong>
+          </div>
+        ) : (
+          <div className={`debt-preview ${debtAmount > 0 ? "open" : ""}`}>
+            <span>A deuda</span>
+            <strong>{formatMoney(debtAmount)}</strong>
+          </div>
+        )}
 
         <button
           type="button"
@@ -771,7 +1050,7 @@ export function QuickSalePage() {
           disabled={submitting || cart.length <= 0}
         >
           <Icon name="wallet" size={16} />
-          {submitting ? "Cobrando..." : "Cobrar venta (F4)"}
+          {submitting ? "Procesando..." : paymentMethod === "Consumo interno" ? "Registrar consumo (F4)" : "Cobrar venta (F4)"}
         </button>
 
         <div className="sale-side-actions">
@@ -789,7 +1068,10 @@ export function QuickSalePage() {
           </button>
         </div>
 
-        <small className="shortcut-hint">Atajos: F2 scanner, F3 buscar, F4 cobrar, Ctrl+L limpiar, +/- cantidad.</small>
+        <small className="shortcut-hint">
+          Atajos: F2 scanner, F3 buscar, F4 cobrar, F5 parcial, F6 metodo, F7 cliente, F8 abono, F9 vencimiento,
+          F10 primer rapido, Flechas carrito, +/- cantidad, Del quitar, Alt+1..6 metodo, Ctrl+L limpiar, Esc scanner.
+        </small>
       </aside>
     </div>
   );

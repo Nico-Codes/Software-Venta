@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 
 type LoginPageProps = {
   backendStatus: string;
+  appVersion: string;
   loadingSession: boolean;
   submitting: boolean;
   error: string | null;
@@ -14,6 +15,7 @@ type LoginPageProps = {
 
 export function LoginPage({
   backendStatus,
+  appVersion,
   loadingSession,
   submitting,
   error,
@@ -55,8 +57,8 @@ export function LoginPage({
       setSetupError("Completa todos los campos para crear el administrador.");
       return;
     }
-    if (setupPassword.trim().length < 6) {
-      setSetupError("La clave debe tener al menos 6 caracteres.");
+    if (setupPassword.trim().length < 4) {
+      setSetupError("La clave debe tener al menos 4 caracteres.");
       return;
     }
     if (setupPassword !== setupPasswordRepeat) {
@@ -75,7 +77,7 @@ export function LoginPage({
             <Icon name="spark" size={18} />
           </div>
           <div>
-            <h1>ALTO TRAGO</h1>
+            <h1>BUEN TRAGO</h1>
             <p>{bootstrapNeedsSetup ? "Configuracion inicial segura" : "Ingreso seguro por usuario y rol."}</p>
           </div>
         </header>
@@ -110,7 +112,7 @@ export function LoginPage({
                 type="password"
                 value={setupPassword}
                 onChange={(event) => setSetupPassword(event.target.value)}
-                placeholder="Minimo 6 caracteres"
+                placeholder="Minimo 4 caracteres"
                 autoComplete="new-password"
                 disabled={loadingSession || submitting}
               />
@@ -170,6 +172,7 @@ export function LoginPage({
 
         <footer className="login-footer">
           <span>{backendStatus}</span>
+          <small>{`Version ${appVersion}`}</small>
           <small>{bootstrapNeedsSetup ? "Primera ejecucion: define el admin inicial." : "Acceso restringido a usuarios habilitados."}</small>
         </footer>
       </section>

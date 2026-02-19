@@ -14,7 +14,13 @@ export type UtilitySection =
 
 export type ViewKey = PrimarySection | UtilitySection;
 
-export type PaymentMethod = "Efectivo" | "Credito" | "Debito" | "Transferencia" | "Deuda";
+export type PaymentMethod =
+  | "Efectivo"
+  | "Credito"
+  | "Debito"
+  | "Transferencia"
+  | "Deuda"
+  | "Consumo interno";
 
 export type UserRole = "admin" | "seller";
 
@@ -334,12 +340,12 @@ export type CreateSaleResponse = {
   soldAt: string;
   total: number;
   paymentMethod: PaymentMethod;
-  saleType: "cash" | "credit";
+  saleType: "cash" | "credit" | "internal";
   customerId?: number;
   paidAmount: number;
   balanceDue: number;
   dueDate?: string;
-  status: "paid" | "partial" | "credit";
+  status: "paid" | "partial" | "credit" | "internal";
   initialPaymentMethod?: PaymentMethod;
 };
 
@@ -373,6 +379,9 @@ export type DashboardSummary = {
   paidTotal: number;
   dueTotal: number;
   estimatedProfit: number;
+  internalConsumptionTotal: number;
+  internalOperationsCount: number;
+  netProfitAfterInternal: number;
 };
 
 export type PaymentBreakdownItem = {
@@ -416,6 +425,9 @@ export type DashboardCompareBlock = {
   paidTotal: number;
   dueTotal: number;
   estimatedProfit: number;
+  internalConsumptionTotal: number;
+  internalOperationsCount: number;
+  netProfitAfterInternal: number;
   salesCount: number;
   avgTicket: number;
 };
@@ -448,6 +460,9 @@ export type ReportSummary = {
   paidTotal: number;
   dueTotal: number;
   estimatedProfit: number;
+  internalConsumptionTotal: number;
+  internalOperationsCount: number;
+  netProfitAfterInternal: number;
   avgTicket: number;
 };
 

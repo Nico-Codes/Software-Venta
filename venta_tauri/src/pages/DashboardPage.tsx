@@ -2,16 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { dashboardExecutive, dashboardSnapshot } from "../tauri";
 import { DashboardExecutiveResponse, DashboardSnapshotResponse } from "../types";
-
-const moneyFormatter = new Intl.NumberFormat("es-AR", {
-  style: "currency",
-  currency: "ARS",
-  maximumFractionDigits: 2,
-});
-
-const integerFormatter = new Intl.NumberFormat("es-AR", {
-  maximumFractionDigits: 0,
-});
+import { formatInteger, formatMoney } from "../utils/number";
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -115,23 +106,32 @@ export function DashboardPage() {
       <div className="dashboard-kpis">
         <article className="panel kpi-card">
           <span>Ventas</span>
-          <strong>{integerFormatter.format(snapshot?.summary.salesCount ?? 0)}</strong>
+          <strong>{formatInteger(snapshot?.summary.salesCount ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Total vendido</span>
-          <strong>{moneyFormatter.format(snapshot?.summary.grossTotal ?? 0)}</strong>
+          <strong>{formatMoney(snapshot?.summary.grossTotal ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Cobrado</span>
-          <strong>{moneyFormatter.format(snapshot?.summary.paidTotal ?? 0)}</strong>
+          <strong>{formatMoney(snapshot?.summary.paidTotal ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Deuda pendiente</span>
-          <strong>{moneyFormatter.format(snapshot?.summary.dueTotal ?? 0)}</strong>
+          <strong>{formatMoney(snapshot?.summary.dueTotal ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Ganancia estimada</span>
-          <strong>{moneyFormatter.format(snapshot?.summary.estimatedProfit ?? 0)}</strong>
+          <strong>{formatMoney(snapshot?.summary.estimatedProfit ?? 0)}</strong>
+        </article>
+        <article className="panel kpi-card">
+          <span>Consumo interno</span>
+          <strong>{formatMoney(snapshot?.summary.internalConsumptionTotal ?? 0)}</strong>
+          <small>{`${formatInteger(snapshot?.summary.internalOperationsCount ?? 0)} mov.`}</small>
+        </article>
+        <article className="panel kpi-card">
+          <span>Resultado neto</span>
+          <strong>{formatMoney(snapshot?.summary.netProfitAfterInternal ?? 0)}</strong>
         </article>
         <article className="panel kpi-card">
           <span>Delta venta vs mes previo</span>
@@ -159,7 +159,7 @@ export function DashboardPage() {
                       style={{ width: `${Math.max((item.total / maxDailyTotal) * 100, 3)}%` }}
                     />
                   </div>
-                  <strong>{moneyFormatter.format(item.total)}</strong>
+                  <strong>{formatMoney(item.total)}</strong>
                 </div>
               ))
             )}
@@ -181,7 +181,7 @@ export function DashboardPage() {
                       style={{ width: `${Math.max((item.total / maxPaymentTotal) * 100, 3)}%` }}
                     />
                   </div>
-                  <strong>{moneyFormatter.format(item.total)}</strong>
+                  <strong>{formatMoney(item.total)}</strong>
                 </div>
               ))
             )}
@@ -210,8 +210,8 @@ export function DashboardPage() {
                   snapshot.topProducts.map((item) => (
                     <tr key={`top-${item.productName}`}>
                       <td>{item.productName}</td>
-                      <td>{item.quantity.toFixed(2)}</td>
-                      <td>{moneyFormatter.format(item.revenue)}</td>
+                      <td>{formatInteger(item.quantity)}</td>
+                      <td>{formatMoney(item.revenue)}</td>
                     </tr>
                   ))
                 )}
@@ -242,8 +242,8 @@ export function DashboardPage() {
                   snapshot.lowProducts.map((item) => (
                     <tr key={`low-${item.productName}`}>
                       <td>{item.productName}</td>
-                      <td>{item.quantity.toFixed(2)}</td>
-                      <td>{moneyFormatter.format(item.revenue)}</td>
+                      <td>{formatInteger(item.quantity)}</td>
+                      <td>{formatMoney(item.revenue)}</td>
                     </tr>
                   ))
                 )}
@@ -275,9 +275,9 @@ export function DashboardPage() {
                   snapshot.lowStockAlerts.map((item) => (
                     <tr key={`alert-${item.id}`}>
                       <td>{item.name}</td>
-                      <td>{item.stock.toFixed(2)}</td>
-                      <td>{item.minStock.toFixed(2)}</td>
-                      <td>{item.shortage.toFixed(2)}</td>
+                      <td>{formatInteger(item.stock)}</td>
+                      <td>{formatInteger(item.minStock)}</td>
+                      <td>{formatInteger(item.shortage)}</td>
                     </tr>
                   ))
                 )}
@@ -306,7 +306,7 @@ export function DashboardPage() {
                       }}
                     />
                   </div>
-                  <strong>{moneyFormatter.format(item.total)}</strong>
+                  <strong>{formatMoney(item.total)}</strong>
                 </div>
               ))
             )}
@@ -335,8 +335,8 @@ export function DashboardPage() {
                   executive.categoryProfit.map((item) => (
                     <tr key={`cat-${item.categoryName}`}>
                       <td>{item.categoryName}</td>
-                      <td>{moneyFormatter.format(item.revenue)}</td>
-                      <td>{moneyFormatter.format(item.profit)}</td>
+                      <td>{formatMoney(item.revenue)}</td>
+                      <td>{formatMoney(item.profit)}</td>
                     </tr>
                   ))
                 )}

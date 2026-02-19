@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion as tauriGetVersion } from "@tauri-apps/api/app";
 import {
   AuthBootstrapCreateRequest,
   AuthBootstrapStatusResponse,
@@ -56,6 +57,8 @@ function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export const APP_FALLBACK_VERSION = "1.0.5";
+
 function stringifyInvokeError(error: unknown): string {
   if (typeof error === "string") {
     return error;
@@ -86,6 +89,17 @@ export async function healthCheck(): Promise<string> {
     return await invoke<string>("health_check");
   } catch {
     return "preview-web";
+  }
+}
+
+export async function getAppVersion(): Promise<string> {
+  if (!hasTauriRuntime()) {
+    return APP_FALLBACK_VERSION;
+  }
+  try {
+    return await tauriGetVersion();
+  } catch {
+    return APP_FALLBACK_VERSION;
   }
 }
 
@@ -337,3 +351,4 @@ export function listTicketPrints(limit = 120): Promise<TicketPrintRow[]> {
 export function qualityAudit(): Promise<QualityAuditResponse> {
   return invokeStrict<QualityAuditResponse>("quality_audit");
 }
+

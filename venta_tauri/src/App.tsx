@@ -16,11 +16,13 @@ import { TicketsPage } from "./pages/TicketsPage";
 import { QualityPage } from "./pages/QualityPage";
 import { UtilityPlaceholderPage } from "./pages/UtilityPlaceholderPage";
 import {
+  APP_FALLBACK_VERSION,
   authBootstrapCreateAdmin,
   authBootstrapStatus,
   authLogin,
   authLogout,
   authSession,
+  getAppVersion,
   healthCheck,
 } from "./tauri";
 import { AuthBootstrapStatusResponse, SessionUser, UserRole, ViewKey } from "./types";
@@ -91,6 +93,7 @@ export default function App() {
   const [activeSection, setActiveSection] = useState<ViewKey>("quick-sale");
   const [utilitiesOpen, setUtilitiesOpen] = useState(false);
   const [backendStatus, setBackendStatus] = useState("Conectando backend...");
+  const [appVersion, setAppVersion] = useState(APP_FALLBACK_VERSION);
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
   const [bootstrapStatus, setBootstrapStatus] = useState<AuthBootstrapStatusResponse | null>(null);
@@ -120,6 +123,19 @@ export default function App() {
       } else {
         setBackendStatus("Vista web (sin runtime Tauri)");
       }
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    getAppVersion().then((version) => {
+      if (!mounted) {
+        return;
+      }
+      setAppVersion(version);
     });
     return () => {
       mounted = false;
@@ -305,6 +321,7 @@ export default function App() {
     return (
       <LoginPage
         backendStatus={backendStatus}
+        appVersion={appVersion}
         loadingSession={loadingSession}
         submitting={loginSubmitting}
         error={authError}
@@ -323,7 +340,7 @@ export default function App() {
             <Icon name="spark" size={18} />
           </div>
           <div>
-            <h1>ALTO TRAGO</h1>
+            <h1>BUEN TRAGO</h1>
             <p>Desktop local offline</p>
           </div>
         </div>
@@ -398,7 +415,7 @@ export default function App() {
           )}
         </nav>
 
-        <footer className="sidebar-footer">Migracion en curso: Python -&gt; Tauri + React + Rust.</footer>
+        <footer className="sidebar-footer">{`Version ${appVersion} | Python -> Tauri + React + Rust`}</footer>
       </aside>
 
       <section className="workspace">
@@ -410,6 +427,7 @@ export default function App() {
           <div className="topbar-actions">
             {!isAdmin && <span className="status-badge">Modo vendedor</span>}
             <span className="status-badge">{backendStatus}</span>
+            <span className="status-badge">{`v${appVersion}`}</span>
           </div>
         </header>
 

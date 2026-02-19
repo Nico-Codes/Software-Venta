@@ -6,6 +6,7 @@ import {
   registerInventoryMovement,
 } from "../tauri";
 import { InventoryMovementRow, ProductAdminRow } from "../types";
+import { formatInteger, parseIntegerInput } from "../utils/number";
 
 type MovementTypeFilter = "todos" | "manual_in" | "manual_out" | "adjustment" | "sale";
 type MovementTypeForm = "manual_in" | "manual_out" | "adjustment";
@@ -33,11 +34,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function parseDecimal(raw: string): number {
-  const parsed = Number.parseFloat(raw.replace(",", "."));
-  if (!Number.isFinite(parsed)) {
-    return 0;
-  }
-  return parsed;
+  return parseIntegerInput(raw);
 }
 
 function formatDateTime(value: string): string {
@@ -165,7 +162,7 @@ export function InventoryPage() {
       setNotice({ tone: "ok", text: result.message });
       setNoteInput("");
       setQuantityInput("1");
-      setTargetStockInput(result.product.stock.toFixed(2));
+      setTargetStockInput(formatInteger(result.product.stock));
       await Promise.all([reloadProducts(String(result.product.id)), reloadMovements()]);
     } catch (error) {
       setNotice({ tone: "error", text: toErrorMessage(error) });
@@ -199,14 +196,14 @@ export function InventoryPage() {
                   const product =
                     products.find((row) => String(row.id) === event.target.value) ?? null;
                   if (product) {
-                    setTargetStockInput(product.stock.toFixed(2));
+                    setTargetStockInput(formatInteger(product.stock));
                   }
                 }}
               >
                 <option value="">Seleccionar</option>
                 {products.map((product) => (
                   <option key={product.id} value={product.id}>
-                    {product.name} | Stock {product.stock.toFixed(2)}
+                    {product.name} | Stock {formatInteger(product.stock)}
                   </option>
                 ))}
               </select>
@@ -233,7 +230,7 @@ export function InventoryPage() {
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={targetStockInput}
                 onChange={(event) => setTargetStockInput(event.target.value)}
                 placeholder="Ej: 24"
@@ -245,7 +242,7 @@ export function InventoryPage() {
               <input
                 type="number"
                 min={0}
-                step="0.01"
+                step="1"
                 value={quantityInput}
                 onChange={(event) => setQuantityInput(event.target.value)}
                 placeholder="Ej: 6"
@@ -272,8 +269,8 @@ export function InventoryPage() {
             <span>Producto seleccionado</span>
             <strong>{selectedProduct.name}</strong>
             <small>
-              Stock: {selectedProduct.stock.toFixed(2)} | Minimo:{" "}
-              {selectedProduct.minStock.toFixed(2)}
+              Stock: {formatInteger(selectedProduct.stock)} | Minimo:{" "}
+              {formatInteger(selectedProduct.minStock)}
             </small>
           </div>
         )}
@@ -335,9 +332,9 @@ export function InventoryPage() {
                     <td>{formatDateTime(movement.createdAt)}</td>
                     <td>{movement.productName}</td>
                     <td>{movementTypeLabel[movement.movementType] ?? movement.movementType}</td>
-                    <td>{movement.quantity.toFixed(2)}</td>
-                    <td>{movement.stockBefore.toFixed(2)}</td>
-                    <td>{movement.stockAfter.toFixed(2)}</td>
+                    <td>{formatInteger(movement.quantity)}</td>
+                    <td>{formatInteger(movement.stockBefore)}</td>
+                    <td>{formatInteger(movement.stockAfter)}</td>
                     <td>{movement.note || "-"}</td>
                   </tr>
                 ))
@@ -356,7 +353,7 @@ export function InventoryPage() {
                 <article key={product.id}>
                   <strong>{product.name}</strong>
                   <small>
-                    Stock {product.stock.toFixed(2)} / Minimo {product.minStock.toFixed(2)}
+                    Stock {formatInteger(product.stock)} / Minimo {formatInteger(product.minStock)}
                   </small>
                 </article>
               ))}

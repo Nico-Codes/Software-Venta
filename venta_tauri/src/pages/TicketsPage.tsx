@@ -12,6 +12,7 @@ import {
   TicketSettingsResponse,
   UpdateTicketSettingsRequest,
 } from "../types";
+import { formatMoney } from "../utils/number";
 
 type Notice = {
   tone: "ok" | "error" | "info";
@@ -121,8 +122,8 @@ export function TicketsPage() {
       draft.storeName || "Mi Local",
       draft.headerText || "",
       "---",
-      "1 x Producto ejemplo   1200.00",
-      "TOTAL                1200.00",
+      "1 x Producto ejemplo   1200",
+      "TOTAL                1200",
       "Pago: Efectivo",
       "---",
       draft.footerText || "Gracias por su compra",
@@ -372,7 +373,7 @@ export function TicketsPage() {
                 <div>
                   <strong>{`Venta #${row.saleId} (${row.copyType})`}</strong>
                   <small>{formatDateTime(row.printedAt)}</small>
-                  <small>{`Total ${row.total.toFixed(2)} | Cobrado ${row.paidAmount.toFixed(2)} | Deuda ${row.balanceDue.toFixed(2)}`}</small>
+                  <small>{`Total ${formatMoney(row.total)} | Cobrado ${formatMoney(row.paidAmount)} | Deuda ${formatMoney(row.balanceDue)}`}</small>
                 </div>
                 <button
                   type="button"
