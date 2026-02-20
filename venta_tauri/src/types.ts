@@ -253,6 +253,19 @@ export type CategoryDeleteResponse = {
   id: number;
 };
 
+export type DeletedCategoryArchiveRow = {
+  archiveId: number;
+  originalCategoryId: number;
+  name: string;
+  marginPercent: number;
+  deletedAt: string;
+};
+
+export type RestoreDeletedCategoryResponse = {
+  archiveId: number;
+  category: CategoryAdminSummary;
+};
+
 export type ProductAdminRow = {
   id: number;
   name: string;
@@ -289,6 +302,8 @@ export type StockMovementSummary = {
   stockAfter: number;
   productName: string;
   barcode: string | null;
+  referenceType: string | null;
+  referenceId: number | null;
 };
 
 export type InventoryMovementType = "manual_in" | "manual_out" | "adjustment" | "sale";
@@ -304,6 +319,8 @@ export type InventoryMovementRow = {
   productName: string;
   barcode: string | null;
   note: string | null;
+  referenceType: string | null;
+  referenceId: number | null;
 };
 
 export type RegisterInventoryMovementRequest = {
@@ -318,6 +335,19 @@ export type RegisterInventoryMovementResponse = {
   message: string;
   product: ProductSummary;
   movement: InventoryMovementRow;
+};
+
+export type ReverseStockMovementRequest = {
+  movementId: number;
+  reason?: string;
+};
+
+export type ReverseStockMovementResponse = {
+  movementId: number;
+  reversalMovementId: number;
+  reversedAt: string;
+  product: ProductSummary;
+  quantityReverted: number;
 };
 
 export type SaleItemInput = {
@@ -349,9 +379,38 @@ export type CreateSaleResponse = {
   initialPaymentMethod?: PaymentMethod;
 };
 
+export type ReverseSaleRequest = {
+  saleId: number;
+  reason?: string;
+};
+
+export type ReverseSaleResponse = {
+  saleId: number;
+  reversedAt: string;
+  restoredItems: number;
+  restoredUnits: number;
+  removedPayments: number;
+};
+
+export type QuickStockLookupProduct = {
+  id: number;
+  name: string;
+  barcode: string | null;
+  stock: number;
+  cost: number;
+  salePrice: number;
+};
+
+export type QuickStockLookupResponse = {
+  found: boolean;
+  message: string;
+  product?: QuickStockLookupProduct;
+};
+
 export type QuickStockAddRequest = {
   barcode: string;
   quantity: number;
+  unitCost?: number;
   note?: string;
 };
 

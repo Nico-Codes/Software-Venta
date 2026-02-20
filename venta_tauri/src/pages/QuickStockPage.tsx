@@ -5,10 +5,13 @@ import {
   createProduct,
   listCategories,
   listRecentStockMovements,
+  quickStockLookupByBarcode,
   quickStockAddByBarcode,
+  reverseSale,
+  reverseStockMovement,
 } from "../tauri";
-import { CategorySummary, StockMovementSummary } from "../types";
-import { formatInteger, parseIntegerInput } from "../utils/number";
+import { CategorySummary, QuickStockLookupProduct, StockMovementSummary } from "../types";
+import { formatInteger, parseIntegerInput, roundInteger } from "../utils/number";
 
 type Notice = {
   tone: "ok" | "error" | "info";
@@ -34,7 +37,7 @@ const EMPTY_CREATE_FORM: CreateFormState = {
   salePrice: "0",
   stock: "1",
   minStock: "0",
-  autoPrice: false,
+  autoPrice: true,
 };
 
 function toErrorMessage(error: unknown): string {
@@ -75,6 +78,14 @@ function movementLabel(type: string): string {
   return type;
 }
 
+function canRevertMovement(row: StockMovementSummary): boolean {
+  const referenceType = row.referenceType ?? "";
+  if ((referenceType === "sale" || referenceType === "internal_consumption") && (row.referenceId ?? 0) > 0) {
+    return true;
+  }
+  return row.movementType === "manual_in" || row.movementType === "manual_out" || row.movementType === "adjustment";
+}
+
 export function QuickStockPage() {
   const barcodeInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -85,8 +96,14 @@ export function QuickStockPage() {
   const [loadingMovement, setLoadingMovement] = useState(false);
   const [addingStock, setAddingStock] = useState(false);
   const [creatingProduct, setCreatingProduct] = useState(false);
+  const [reversingMovementId, setReversingMovementId] = useState<number | null>(null);
   const [createFormOpen, setCreateFormOpen] = useState(false);
   const [createForm, setCreateForm] = useState<CreateFormState>(EMPTY_CREATE_FORM);
+  const [confirmPopupOpen, setConfirmPopupOpen] = useState(false);
+  const [confirmProduct, setConfirmProduct] = useState<QuickStockLookupProduct | null>(null);
+  const [confirmQuantityInput, setConfirmQuantityInput] = useState("1");
+  const [confirmCostInput, setConfirmCostInput] = useState("0");
+  const [confirmingAdd, setConfirmingAdd] = useState(false);
   const [movements, setMovements] = useState<StockMovementSummary[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -156,13 +173,9 @@ export function QuickStockPage() {
 
     setAddingStock(true);
     try {
-      const response = await quickStockAddByBarcode({
-        barcode: cleanBarcode,
-        quantity,
-        note: noteInput.trim() || undefined,
-      });
+      const lookup = await quickStockLookupByBarcode(cleanBarcode);
 
-      if (!response.found) {
+      if (!lookup.found || !lookup.product) {
         setCreateForm({
           ...EMPTY_CREATE_FORM,
           barcode: cleanBarcode,
@@ -170,7 +183,61 @@ export function QuickStockPage() {
           categoryId: categories[0] ? String(categories[0].id) : "",
         });
         setCreateFormOpen(true);
-        setNotice({ tone: "info", text: response.message });
+        setNotice({ tone: "info", text: lookup.message });
+        return;
+      }
+
+      const defaultCost = Math.max(roundInteger(lookup.product.cost), 0);
+      setConfirmProduct(lookup.product);
+      setConfirmQuantityInput(formatInteger(quantity));
+      setConfirmCostInput(formatInteger(defaultCost > 0 ? defaultCost : 1));
+      setConfirmPopupOpen(true);
+      setNotice({
+        tone: "info",
+        text: `Producto ${lookup.product.name} encontrado. Confirma cantidad y costo para sumar stock.`,
+      });
+    } catch (error) {
+      setNotice({ tone: "error", text: toErrorMessage(error) });
+    } finally {
+      setAddingStock(false);
+    }
+  }
+
+  function closeConfirmPopup() {
+    setConfirmPopupOpen(false);
+    setConfirmProduct(null);
+    setConfirmQuantityInput("1");
+    setConfirmCostInput("0");
+    barcodeInputRef.current?.focus();
+  }
+
+  async function handleConfirmPopupAddStock() {
+    if (!confirmProduct) {
+      setNotice({ tone: "error", text: "No hay producto seleccionado para confirmar stock." });
+      return;
+    }
+    const quantity = parseDecimal(confirmQuantityInput);
+    const unitCost = parseDecimal(confirmCostInput);
+    if (quantity <= 0) {
+      setNotice({ tone: "error", text: "La cantidad debe ser mayor a cero." });
+      return;
+    }
+    if (unitCost <= 0) {
+      setNotice({ tone: "error", text: "El precio de stock debe ser mayor a cero." });
+      return;
+    }
+
+    setConfirmingAdd(true);
+    try {
+      const response = await quickStockAddByBarcode({
+        barcode: confirmProduct.barcode ?? barcodeInput.trim(),
+        quantity,
+        unitCost,
+        note: noteInput.trim() || undefined,
+      });
+
+      if (!response.found) {
+        setNotice({ tone: "error", text: "El producto ya no existe. Recarga y vuelve a intentar." });
         return;
       }
 
@@ -181,13 +248,21 @@ export function QuickStockPage() {
       setBarcodeInput("");
       setQuantityInput("1");
       setNoteInput("");
+      closeConfirmPopup();
       await refreshMovements();
     } catch (error) {
       setNotice({ tone: "error", text: toErrorMessage(error) });
     } finally {
-      setAddingStock(false);
-      barcodeInputRef.current?.focus();
+      setConfirmingAdd(false);
     }
+  }
+
+  function handleConfirmPopupKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void handleConfirmPopupAddStock();
   }
 
   async function handleCreateProduct() {
@@ -210,8 +285,8 @@ export function QuickStockPage() {
       setNotice({ tone: "error", text: "Selecciona categoria para el producto." });
       return;
     }
-    if (cost < 0) {
-      setNotice({ tone: "error", text: "El costo no puede ser negativo." });
+    if (cost <= 0) {
+      setNotice({ tone: "error", text: "El costo inicial debe ser mayor a cero." });
       return;
     }
     if (!createForm.autoPrice && salePrice <= 0) {
@@ -256,6 +331,57 @@ export function QuickStockPage() {
     }
   }
 
+  async function handleReverseMovement(movement: StockMovementSummary) {
+    if (!canRevertMovement(movement)) {
+      setNotice({
+        tone: "info",
+        text: "Ese movimiento no se revierte desde stock rapido.",
+      });
+      return;
+    }
+
+    const fromSale =
+      (movement.referenceType === "sale" || movement.referenceType === "internal_consumption") &&
+      (movement.referenceId ?? 0) > 0;
+    const confirmed = window.confirm(fromSale
+      ? `Revertir venta #${movement.referenceId}? Se restaura stock y se eliminan pagos/deuda de esa venta.`
+      : `Revertir movimiento #${movement.id} de ${movement.productName}? Esta accion crea un movimiento inverso auditado.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setReversingMovementId(movement.id);
+    try {
+      if (fromSale && movement.referenceId) {
+        const result = await reverseSale({
+          saleId: movement.referenceId,
+          reason: "Reversion desde movimientos de stock rapido",
+        });
+        setNotice({
+          tone: "ok",
+          text: `Venta #${result.saleId} revertida. Unidades restauradas: ${formatInteger(result.restoredUnits)}.`,
+        });
+        await refreshMovements();
+      } else {
+        const result = await reverseStockMovement({
+          movementId: movement.id,
+          reason: "Reversion manual desde stock rapido",
+        });
+        setNotice({
+          tone: "ok",
+          text: `Movimiento #${result.movementId} revertido. Stock actual de ${result.product.name}: ${formatInteger(result.product.stock)}.`,
+        });
+        await refreshMovements();
+      }
+    } catch (error) {
+      setNotice({ tone: "error", text: toErrorMessage(error) });
+    } finally {
+      setReversingMovementId(null);
+      barcodeInputRef.current?.focus();
+    }
+  }
+
   function handleBarcodeKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key !== "Enter") {
       return;
@@ -277,7 +403,7 @@ export function QuickStockPage() {
       <header className="panel-header-row">
         <div>
           <h2>Agregar stock rapido</h2>
-          <p>Escanea, confirma cantidad y guarda en segundos.</p>
+          <p>Escanea, confirma cantidad y costo, y guarda en segundos.</p>
         </div>
         <div className="quick-stock-header-tools">
           <span className="chip chip-secondary">
@@ -301,6 +427,58 @@ export function QuickStockPage() {
         </div>
       )}
 
+      {confirmPopupOpen && confirmProduct && (
+        <div className="quick-stock-modal-backdrop">
+          <div className="quick-stock-modal" role="dialog" aria-modal="true" aria-label="Confirmar ingreso de stock">
+            <header className="quick-stock-modal-header">
+              <h3>Confirmar ingreso de stock</h3>
+              <small>{confirmProduct.name}</small>
+            </header>
+            <div className="quick-stock-modal-grid">
+              <label className="field">
+                <span>Cantidad a agregar</span>
+                <input
+                  type="number"
+                  min={1}
+                  step="1"
+                  value={confirmQuantityInput}
+                  onChange={(event) => setConfirmQuantityInput(event.target.value)}
+                  onKeyDown={handleConfirmPopupKeyDown}
+                />
+              </label>
+              <label className="field">
+                <span>Precio de stock (costo)</span>
+                <input
+                  type="number"
+                  min={1}
+                  step="1"
+                  value={confirmCostInput}
+                  onChange={(event) => setConfirmCostInput(event.target.value)}
+                  onKeyDown={handleConfirmPopupKeyDown}
+                />
+              </label>
+            </div>
+            <div className="quick-stock-modal-actions">
+              <button
+                type="button"
+                className="button-soft"
+                onClick={closeConfirmPopup}
+                disabled={confirmingAdd}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmPopupAddStock()}
+                disabled={confirmingAdd}
+              >
+                {confirmingAdd ? "Guardando..." : "Confirmar y agregar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="quick-stock-fastbar">
         <label className="field field-scan quick-stock-barcode">
           <span>Codigo de barras</span>
@@ -311,6 +489,7 @@ export function QuickStockPage() {
             onKeyDown={handleBarcodeKeyDown}
             placeholder="Escanear producto"
             autoComplete="off"
+            disabled={confirmPopupOpen}
           />
         </label>
 
@@ -323,6 +502,7 @@ export function QuickStockPage() {
             value={quantityInput}
             onChange={(event) => setQuantityInput(event.target.value)}
             onKeyDown={handleFastInputKeyDown}
+            disabled={confirmPopupOpen}
           />
         </label>
 
@@ -330,7 +510,7 @@ export function QuickStockPage() {
           type="button"
           className="quick-stock-submit"
           onClick={handleAddStock}
-          disabled={addingStock || loadingBoot}
+          disabled={addingStock || loadingBoot || confirmPopupOpen}
         >
           {addingStock ? "Guardando..." : "Agregar stock"}
         </button>
@@ -344,6 +524,7 @@ export function QuickStockPage() {
             onChange={(event) => setNoteInput(event.target.value)}
             onKeyDown={handleFastInputKeyDown}
             placeholder="Compra, ajuste, etc."
+            disabled={confirmPopupOpen}
           />
         </label>
 
@@ -351,6 +532,7 @@ export function QuickStockPage() {
           type="button"
           className="button-soft quick-stock-toggle-create"
           onClick={() => setCreateFormOpen((prev) => !prev)}
+          disabled={confirmPopupOpen}
         >
           {createFormOpen ? "Ocultar alta completa" : "Alta completa"}
         </button>
@@ -490,12 +672,13 @@ export function QuickStockPage() {
                 <th>Cantidad</th>
                 <th>Antes</th>
                 <th>Despues</th>
+                <th>Accion</th>
               </tr>
             </thead>
             <tbody>
               {movements.length <= 0 ? (
                 <tr>
-                  <td colSpan={6} className="table-empty">
+                  <td colSpan={7} className="table-empty">
                     {loadingMovement ? "Cargando movimientos..." : "Sin movimientos recientes."}
                   </td>
                 </tr>
@@ -508,6 +691,19 @@ export function QuickStockPage() {
                     <td>{formatInteger(movement.quantity)}</td>
                     <td>{formatInteger(movement.stockBefore)}</td>
                     <td>{formatInteger(movement.stockAfter)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="button-soft button-xs"
+                        onClick={() => void handleReverseMovement(movement)}
+                        disabled={
+                          !canRevertMovement(movement) ||
+                          reversingMovementId === movement.id
+                        }
+                      >
+                        {reversingMovementId === movement.id ? "Revirtiendo..." : "Revertir"}
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}

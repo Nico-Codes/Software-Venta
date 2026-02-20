@@ -1,0 +1,17 @@
+﻿BUEN TRAGO - ACTUALIZACION_17
+
+Actualizacion enfocada solo en Windows.
+
+Archivos incluidos:
+- installador_windows/BUEN TRAGO_1.0.7_x64_en-US.msi
+- installador_windows/BUEN TRAGO_1.0.7_x64-setup.exe
+- scripts/ACTUALIZAR_WINDOWS.txt
+
+Instalacion recomendada:
+1) Ejecutar:
+   installador_windows/BUEN TRAGO_1.0.7_x64-setup.exe
+2) Si prefieres MSI:
+   installador_windows/BUEN TRAGO_1.0.7_x64_en-US.msi
+
+Guia rapida:
+- scripts/ACTUALIZAR_WINDOWS.txt

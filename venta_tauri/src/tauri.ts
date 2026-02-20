@@ -10,6 +10,7 @@ import {
   BackupStatusResponse,
   BackupVerifyResponse,
   CategoryAdminSummary,
+  DeletedCategoryArchiveRow,
   CategoryDeleteResponse,
   CategorySummary,
   CreateBackupResponse,
@@ -30,8 +31,14 @@ import {
   ProductSummary,
   ProductAdminRow,
   QualityAuditResponse,
+  QuickStockLookupResponse,
   QuickStockAddRequest,
   QuickStockAddResponse,
+  ReverseSaleRequest,
+  ReverseSaleResponse,
+  ReverseStockMovementRequest,
+  ReverseStockMovementResponse,
+  RestoreDeletedCategoryResponse,
   RestoreBackupResponse,
   RegisterInventoryMovementRequest,
   RegisterInventoryMovementResponse,
@@ -57,7 +64,7 @@ function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-export const APP_FALLBACK_VERSION = "1.0.5";
+export const APP_FALLBACK_VERSION = "1.0.10";
 
 function stringifyInvokeError(error: unknown): string {
   if (typeof error === "string") {
@@ -130,7 +137,7 @@ export function authLogout(): Promise<AuthSessionResponse> {
 }
 
 export function listUsers(includeInactive = true): Promise<UserRow[]> {
-  return invokeStrict<UserRow[]>("list_users", { include_inactive: includeInactive });
+  return invokeStrict<UserRow[]>("list_users", { includeInactive });
 }
 
 export function createUser(payload: CreateUserRequest): Promise<UserRow> {
@@ -142,7 +149,7 @@ export function updateUser(payload: UpdateUserRequest): Promise<UserRow> {
 }
 
 export function deleteUser(userId: number): Promise<UserDeleteResponse> {
-  return invokeStrict<UserDeleteResponse>("delete_user", { user_id: userId });
+  return invokeStrict<UserDeleteResponse>("delete_user", { userId });
 }
 
 export function backupStatus(): Promise<BackupStatusResponse> {
@@ -162,11 +169,11 @@ export function listBackupFiles(limit = 120): Promise<BackupFileInfo[]> {
 }
 
 export function createBackup(targetPath?: string): Promise<CreateBackupResponse> {
-  return invokeStrict<CreateBackupResponse>("create_backup", { target_path: targetPath });
+  return invokeStrict<CreateBackupResponse>("create_backup", { targetPath });
 }
 
 export function restoreBackup(sourcePath: string): Promise<RestoreBackupResponse> {
-  return invokeStrict<RestoreBackupResponse>("restore_backup", { source_path: sourcePath });
+  return invokeStrict<RestoreBackupResponse>("restore_backup", { sourcePath });
 }
 
 export function runBackupMaintenance(force = false): Promise<BackupMaintenanceResponse> {
@@ -194,7 +201,7 @@ export function setProductFavorite(
   favorite: boolean,
 ): Promise<SetFavoriteProductResponse> {
   return invokeStrict<SetFavoriteProductResponse>("set_product_favorite", {
-    product_id: productId,
+    productId,
     favorite,
   });
 }
@@ -217,9 +224,9 @@ export function customerAccountSnapshot(
   paymentsLimit = 40,
 ): Promise<CustomerAccountSnapshotResponse> {
   return invokeStrict<CustomerAccountSnapshotResponse>("customer_account_snapshot", {
-    customer_id: customerId,
-    sales_limit: salesLimit,
-    payments_limit: paymentsLimit,
+    customerId,
+    salesLimit,
+    paymentsLimit,
   });
 }
 
@@ -248,7 +255,17 @@ export function updateCategory(payload: UpdateCategoryRequest): Promise<Category
 }
 
 export function deleteCategory(categoryId: number): Promise<CategoryDeleteResponse> {
-  return invokeStrict<CategoryDeleteResponse>("delete_category", { category_id: categoryId });
+  return invokeStrict<CategoryDeleteResponse>("delete_category", { categoryId });
+}
+
+export function listDeletedCategories(): Promise<DeletedCategoryArchiveRow[]> {
+  return invokeStrict<DeletedCategoryArchiveRow[]>("list_deleted_categories");
+}
+
+export function restoreDeletedCategory(archiveId: number): Promise<RestoreDeletedCategoryResponse> {
+  return invokeStrict<RestoreDeletedCategoryResponse>("restore_deleted_category", {
+    payload: { archiveId },
+  });
 }
 
 export function listProductsAdmin(
@@ -259,8 +276,8 @@ export function listProductsAdmin(
 ): Promise<ProductAdminRow[]> {
   return invokeStrict<ProductAdminRow[]>("list_products_admin", {
     search,
-    category_id: categoryId,
-    include_inactive: includeInactive,
+    categoryId,
+    includeInactive,
     limit,
   });
 }
@@ -280,7 +297,7 @@ export function inventoryListMovements(
 ): Promise<InventoryMovementRow[]> {
   return invokeStrict<InventoryMovementRow[]>("inventory_list_movements", {
     search,
-    movement_type: movementType,
+    movementType,
     limit,
   });
 }
@@ -293,8 +310,18 @@ export function registerInventoryMovement(
   });
 }
 
+export function reverseStockMovement(
+  payload: ReverseStockMovementRequest,
+): Promise<ReverseStockMovementResponse> {
+  return invokeStrict<ReverseStockMovementResponse>("reverse_stock_movement", { payload });
+}
+
 export function listRecentStockMovements(limit = 40): Promise<StockMovementSummary[]> {
   return invokeStrict<StockMovementSummary[]>("list_recent_stock_movements", { limit });
+}
+
+export function quickStockLookupByBarcode(barcode: string): Promise<QuickStockLookupResponse> {
+  return invokeStrict<QuickStockLookupResponse>("quick_stock_lookup_by_barcode", { barcode });
 }
 
 export function quickStockAddByBarcode(payload: QuickStockAddRequest): Promise<QuickStockAddResponse> {
@@ -303,6 +330,10 @@ export function quickStockAddByBarcode(payload: QuickStockAddRequest): Promise<Q
 
 export function createSale(payload: CreateSaleRequest): Promise<CreateSaleResponse> {
   return invokeStrict<CreateSaleResponse>("create_sale", { payload });
+}
+
+export function reverseSale(payload: ReverseSaleRequest): Promise<ReverseSaleResponse> {
+  return invokeStrict<ReverseSaleResponse>("reverse_sale", { payload });
 }
 
 export function dashboardSnapshot(month?: string): Promise<DashboardSnapshotResponse> {
@@ -321,11 +352,11 @@ export function salesReport(
   productsLimit = 120,
 ): Promise<SalesReportResponse> {
   return invokeStrict<SalesReportResponse>("sales_report", {
-    from_date: fromDate,
-    to_date: toDate,
-    payment_method: paymentMethod,
-    sales_limit: salesLimit,
-    products_limit: productsLimit,
+    fromDate,
+    toDate,
+    paymentMethod,
+    salesLimit,
+    productsLimit,
   });
 }
 
@@ -339,8 +370,8 @@ export function updateTicketSettings(payload: UpdateTicketSettingsRequest): Prom
 
 export function generateSaleTicket(saleId: number, copyType = "reimpresion"): Promise<SaleTicketResponse> {
   return invokeStrict<SaleTicketResponse>("generate_sale_ticket", {
-    sale_id: saleId,
-    copy_type: copyType,
+    saleId,
+    copyType,
   });
 }
 

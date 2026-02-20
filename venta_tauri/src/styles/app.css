@@ -561,6 +561,54 @@ body {
   overflow: auto;
 }
 
+.quick-stock-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(10, 28, 49, 0.34);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.quick-stock-modal {
+  width: min(460px, 100%);
+  border: 1px solid #cfe3f8;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 18px 44px rgba(12, 42, 71, 0.22);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.quick-stock-modal-header {
+  display: grid;
+  gap: 4px;
+}
+
+.quick-stock-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.quick-stock-modal-header small {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.quick-stock-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-stock-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .catalog-list {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1511,6 +1559,64 @@ tbody tr:hover {
   gap: 8px;
 }
 
+.categories-deleted {
+  border: 1px solid #dceaf8;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.categories-deleted-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.categories-deleted-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.categories-deleted-header small {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.categories-deleted-list {
+  display: grid;
+  gap: 7px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.categories-deleted-row {
+  border: 1px solid #d9e8fa;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.categories-deleted-row div {
+  display: grid;
+  gap: 2px;
+}
+
+.categories-deleted-row strong {
+  font-size: 13px;
+}
+
+.categories-deleted-row small {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
 .customers-grid {
   height: 100%;
   display: grid;
@@ -1814,6 +1920,15 @@ tbody tr:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
+}
+
+.sale-revert-card {
+  border: 1px solid #dceaf8;
+  border-radius: 12px;
+  background: #f7fbff;
+  padding: 9px;
+  display: grid;
   gap: 8px;
 }
 
@@ -2233,7 +2348,8 @@ tbody tr:hover {
 
   .quick-stock-fastbar,
   .quick-stock-meta,
-  .quick-stock-create-grid {
+  .quick-stock-create-grid,
+  .quick-stock-modal-grid {
     grid-template-columns: 1fr;
   }
 

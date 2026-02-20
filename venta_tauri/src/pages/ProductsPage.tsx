@@ -145,6 +145,7 @@ export function ProductsPage() {
   }
 
   async function handleSave() {
+    const isCreating = !selectedProductId;
     const cleanName = form.name.trim();
     const cleanBarcode = form.barcode.trim();
     const categoryId = Number.parseInt(form.categoryId, 10);
@@ -161,18 +162,21 @@ export function ProductsPage() {
       setNotice({ tone: "error", text: "Selecciona una categoria." });
       return;
     }
-    if (cost < 0) {
-      setNotice({ tone: "error", text: "El costo no puede ser negativo." });
+    if ((isCreating && cost <= 0) || (!isCreating && cost < 0)) {
+      setNotice({
+        tone: "error",
+        text: isCreating ? "El costo inicial debe ser mayor a cero." : "El costo no puede ser negativo.",
+      });
       return;
     }
     if (minStock < 0) {
       setNotice({ tone: "error", text: "El stock minimo no puede ser negativo." });
       return;
     }
-    if (stock < 0 || (!selectedProductId && stock <= 0)) {
+    if (stock < 0 || (isCreating && stock <= 0)) {
       setNotice({
         tone: "error",
-        text: selectedProductId
+        text: !isCreating
           ? "El stock no puede ser negativo."
           : "El stock inicial debe ser mayor a cero.",
       });

@@ -8,6 +8,7 @@ import {
   listCustomers,
   listFavoriteProducts,
   listPaymentMethods,
+  reverseSale,
   searchProducts,
   setProductFavorite,
 } from "../tauri";
@@ -141,6 +142,7 @@ export function QuickSalePage() {
   const paymentSelectRef = useRef<HTMLSelectElement | null>(null);
   const partialPaidInputRef = useRef<HTMLInputElement | null>(null);
   const dueDateInputRef = useRef<HTMLInputElement | null>(null);
+  const cartStateRef = useRef<CartItem[]>([]);
 
   const [barcodeInput, setBarcodeInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -160,6 +162,8 @@ export function QuickSalePage() {
   const [submitting, setSubmitting] = useState(false);
   const [printingTicket, setPrintingTicket] = useState(false);
   const [lastSaleId, setLastSaleId] = useState<number | null>(null);
+  const [revertSaleInput, setRevertSaleInput] = useState("");
+  const [revertingSale, setRevertingSale] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   const total = useMemo(
@@ -204,6 +208,10 @@ export function QuickSalePage() {
       source: "favorites",
     }));
   }, [favoriteIdSet, favorites, searchResults, searchTerm]);
+
+  useEffect(() => {
+    cartStateRef.current = cart;
+  }, [cart]);
 
   async function refreshCustomersState() {
     const rows = await listCustomers(undefined, 200);
@@ -292,6 +300,12 @@ export function QuickSalePage() {
     setPartialPaidInput("0");
     setSelectedCustomerId("");
   }, [partialEnabled, paymentMethod]);
+
+  useEffect(() => {
+    if (lastSaleId !== null) {
+      setRevertSaleInput(String(lastSaleId));
+    }
+  }, [lastSaleId]);
 
   function focusScanner() {
     barcodeInputRef.current?.focus();
@@ -390,79 +404,74 @@ export function QuickSalePage() {
   }
 
   function clearCart() {
+    cartStateRef.current = [];
     setCart([]);
     setSelectedCartProductId(null);
     setNotice({ tone: "info", text: "Carrito limpiado." });
     focusScanner();
   }
 
-  function addProductToCart(product: ProductSummary) {
-    let blockedReason = "";
-    setCart((current) => {
-      const safeStock = Math.max(roundInteger(product.stock), 0);
-      const roundedPrice = roundInteger(product.salePrice);
-      if (safeStock <= 0) {
-        blockedReason = `${product.name} no tiene stock disponible.`;
-        return current;
-      }
+  function addProductToCart(product: ProductSummary): boolean {
+    const safeStock = Math.max(roundInteger(product.stock), 0);
+    const roundedPrice = roundInteger(product.salePrice);
+    if (safeStock <= 0) {
+      setNotice({ tone: "error", text: `${product.name} no tiene stock disponible.` });
+      return false;
+    }
 
-      const index = current.findIndex((item) => item.id === product.id);
-      if (index < 0) {
-        return [...current, { ...product, qty: 1, stock: safeStock, salePrice: roundedPrice }];
-      }
-
-      const next = [...current];
-      const target = next[index];
+    const current = cartStateRef.current;
+    const index = current.findIndex((item) => item.id === product.id);
+    let next: CartItem[];
+    if (index < 0) {
+      next = [...current, { ...product, qty: 1, stock: safeStock, salePrice: roundedPrice }];
+    } else {
+      const target = current[index];
       if (target.qty >= safeStock) {
-        blockedReason = `Stock maximo alcanzado para ${target.name}.`;
-        return current;
+        setNotice({ tone: "error", text: `Stock maximo alcanzado para ${target.name}.` });
+        return false;
       }
-
+      next = [...current];
       next[index] = {
         ...target,
         stock: safeStock,
         salePrice: roundedPrice,
         qty: target.qty + 1,
       };
-      return next;
-    });
-
-    if (blockedReason) {
-      setNotice({ tone: "error", text: blockedReason });
-      return;
     }
+
+    cartStateRef.current = next;
+    setCart(next);
     setSelectedCartProductId(product.id);
     setNotice({ tone: "ok", text: `${product.name} agregado.` });
     focusScanner();
+    return true;
   }
 
   function updateQuantity(productId: number, delta: number) {
-    let blockedReason = "";
-    setCart((current) => {
-      const index = current.findIndex((item) => item.id === productId);
-      if (index < 0) {
-        return current;
-      }
-      const next = [...current];
-      const target = next[index];
-      const updatedQty = target.qty + delta;
-      if (updatedQty <= 0) {
-        next.splice(index, 1);
-        if (selectedCartProductId === productId) {
-          setSelectedCartProductId(next[0]?.id ?? null);
-        }
-        return next;
-      }
-      if (updatedQty > target.stock) {
-        blockedReason = `No hay stock suficiente para ${target.name}.`;
-        return current;
-      }
-      next[index] = { ...target, qty: updatedQty };
-      return next;
-    });
-    if (blockedReason) {
-      setNotice({ tone: "error", text: blockedReason });
+    const current = cartStateRef.current;
+    const index = current.findIndex((item) => item.id === productId);
+    if (index < 0) {
+      return;
     }
+    const next = [...current];
+    const target = next[index];
+    const updatedQty = target.qty + delta;
+    if (updatedQty <= 0) {
+      next.splice(index, 1);
+      cartStateRef.current = next;
+      setCart(next);
+      if (selectedCartProductId === productId) {
+        setSelectedCartProductId(next[0]?.id ?? null);
+      }
+      return;
+    }
+    if (updatedQty > target.stock) {
+      setNotice({ tone: "error", text: `No hay stock suficiente para ${target.name}.` });
+      return;
+    }
+    next[index] = { ...target, qty: updatedQty };
+    cartStateRef.current = next;
+    setCart(next);
   }
 
   async function scanBarcode() {
@@ -477,8 +486,15 @@ export function QuickSalePage() {
         setNotice({ tone: "error", text: "Producto no encontrado para ese codigo." });
         return;
       }
-      addProductToCart(product);
-      setBarcodeInput("");
+      const safeStock = Math.max(roundInteger(product.stock), 0);
+      if (safeStock <= 0) {
+        setNotice({ tone: "error", text: `${product.name} sin stock. No se puede vender.` });
+        return;
+      }
+      const added = addProductToCart(product);
+      if (added) {
+        setBarcodeInput("");
+      }
     } catch (error) {
       setNotice({ tone: "error", text: toErrorMessage(error) });
     } finally {
@@ -562,6 +578,7 @@ export function QuickSalePage() {
         tone: "ok",
         text: `Venta #${result.saleId} guardada.${debtInfo}${internalInfo}`,
       });
+      cartStateRef.current = [];
       setCart([]);
       setSelectedCartProductId(null);
       setPartialEnabled(false);
@@ -597,6 +614,46 @@ export function QuickSalePage() {
       setNotice({ tone: "ok", text: `Ticket de venta #${lastSaleId} reimpreso.` });
     } catch (error) {
       setNotice({ tone: "error", text: toErrorMessage(error) });
+    }
+  }
+
+  async function handleReverseSale() {
+    const saleId = Number.parseInt(revertSaleInput.trim(), 10);
+    if (!Number.isFinite(saleId) || saleId <= 0) {
+      setNotice({ tone: "error", text: "Ingresa un numero de venta valido para revertir." });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Revertir venta #${saleId}? Se restaura stock y se eliminan deuda/pagos asociados.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setRevertingSale(true);
+    try {
+      const result = await reverseSale({
+        saleId,
+        reason: "Reversion manual desde venta rapida",
+      });
+      setNotice({
+        tone: "ok",
+        text: `Venta #${result.saleId} revertida. Items restaurados: ${formatInteger(result.restoredItems)} | Unidades: ${formatInteger(result.restoredUnits)}.`,
+      });
+      if (lastSaleId === saleId) {
+        setLastSaleId(null);
+      }
+      await refreshCustomersState();
+      await refreshFavoritesState();
+      if (searchTerm.trim().length > 0) {
+        await runProductSearch(searchTerm.trim());
+      }
+    } catch (error) {
+      setNotice({ tone: "error", text: toErrorMessage(error) });
+    } finally {
+      setRevertingSale(false);
+      focusScanner();
     }
   }
 
@@ -1065,6 +1122,28 @@ export function QuickSalePage() {
           >
             <Icon name="print" size={16} />
             {printingTicket ? "Imprimiendo..." : "Reimprimir ultimo"}
+          </button>
+        </div>
+
+        <div className="sale-revert-card">
+          <label className="field">
+            <span>Revertir venta</span>
+            <input
+              type="number"
+              min={1}
+              step="1"
+              value={revertSaleInput}
+              onChange={(event) => setRevertSaleInput(event.target.value)}
+              placeholder="Nro de venta"
+            />
+          </label>
+          <button
+            type="button"
+            className="button-soft"
+            onClick={() => void handleReverseSale()}
+            disabled={revertingSale}
+          >
+            {revertingSale ? "Revirtiendo..." : "Revertir venta"}
           </button>
         </div>
 

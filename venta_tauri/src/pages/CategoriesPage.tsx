@@ -3,10 +3,12 @@ import { useEffect, useState } from "react";
 import {
   createCategory,
   deleteCategory,
+  listDeletedCategories,
   listCategoriesAdmin,
+  restoreDeletedCategory,
   updateCategory,
 } from "../tauri";
-import { CategoryAdminSummary } from "../types";
+import { CategoryAdminSummary, DeletedCategoryArchiveRow } from "../types";
 
 type Notice = {
   tone: "ok" | "error" | "info";
@@ -33,12 +35,14 @@ function parseDecimal(raw: string): number {
 
 export function CategoriesPage() {
   const [categories, setCategories] = useState<CategoryAdminSummary[]>([]);
+  const [deletedCategories, setDeletedCategories] = useState<DeletedCategoryArchiveRow[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [nameInput, setNameInput] = useState("");
   const [marginInput, setMarginInput] = useState("30");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [restoringArchiveId, setRestoringArchiveId] = useState<number | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   function syncFormFromCategory(target: CategoryAdminSummary | null) {
@@ -77,8 +81,18 @@ export function CategoriesPage() {
     }
   }
 
+  async function reloadDeletedCategories() {
+    try {
+      const rows = await listDeletedCategories();
+      setDeletedCategories(rows);
+    } catch (error) {
+      setNotice({ tone: "error", text: toErrorMessage(error) });
+      setDeletedCategories([]);
+    }
+  }
+
   useEffect(() => {
-    void reloadCategories();
+    void Promise.all([reloadCategories(), reloadDeletedCategories()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -132,14 +146,36 @@ export function CategoriesPage() {
     setDeleting(true);
     try {
       await deleteCategory(selectedCategory.id);
-      setNotice({ tone: "ok", text: `Categoria ${selectedCategory.name} eliminada.` });
+      setNotice({
+        tone: "ok",
+        text: `Categoria ${selectedCategory.name} eliminada. Puedes restaurarla desde historial.`,
+      });
       setSelectedId("");
       syncFormFromCategory(null);
-      await reloadCategories();
+      await Promise.all([reloadCategories(), reloadDeletedCategories()]);
     } catch (error) {
       setNotice({ tone: "error", text: toErrorMessage(error) });
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function handleRestoreCategory(archiveId: number) {
+    setRestoringArchiveId(archiveId);
+    try {
+      const restored = await restoreDeletedCategory(archiveId);
+      setNotice({
+        tone: "ok",
+        text: `Categoria ${restored.category.name} restaurada correctamente.`,
+      });
+      await Promise.all([
+        reloadCategories(String(restored.category.id)),
+        reloadDeletedCategories(),
+      ]);
+    } catch (error) {
+      setNotice({ tone: "error", text: toErrorMessage(error) });
+    } finally {
+      setRestoringArchiveId(null);
     }
   }
 
@@ -235,6 +271,35 @@ export function CategoriesPage() {
             </button>
           </div>
         </div>
+
+        <section className="categories-deleted">
+          <header className="categories-deleted-header">
+            <h3>Categorias eliminadas</h3>
+            <small>{deletedCategories.length} en historial</small>
+          </header>
+          {deletedCategories.length <= 0 ? (
+            <p className="empty-copy">No hay categorias eliminadas para restaurar.</p>
+          ) : (
+            <div className="categories-deleted-list">
+              {deletedCategories.map((archive) => (
+                <article key={archive.archiveId} className="categories-deleted-row">
+                  <div>
+                    <strong>{archive.name}</strong>
+                    <small>{archive.marginPercent.toFixed(2)}% margen</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="button-soft button-xs"
+                    onClick={() => void handleRestoreCategory(archive.archiveId)}
+                    disabled={restoringArchiveId === archive.archiveId}
+                  >
+                    {restoringArchiveId === archive.archiveId ? "Restaurando..." : "Restaurar"}
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </section>
     </section>
   );

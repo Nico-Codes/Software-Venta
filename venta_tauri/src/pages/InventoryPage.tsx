@@ -4,6 +4,8 @@ import {
   inventoryListMovements,
   listProductsAdmin,
   registerInventoryMovement,
+  reverseSale,
+  reverseStockMovement,
 } from "../tauri";
 import { InventoryMovementRow, ProductAdminRow } from "../types";
 import { formatInteger, parseIntegerInput } from "../utils/number";
@@ -48,6 +50,14 @@ function formatDateTime(value: string): string {
   }).format(parsed);
 }
 
+function canRevertMovement(row: InventoryMovementRow): boolean {
+  const referenceType = row.referenceType ?? "";
+  if ((referenceType === "sale" || referenceType === "internal_consumption") && (row.referenceId ?? 0) > 0) {
+    return true;
+  }
+  return row.movementType === "manual_in" || row.movementType === "manual_out" || row.movementType === "adjustment";
+}
+
 export function InventoryPage() {
   const [products, setProducts] = useState<ProductAdminRow[]>([]);
   const [movements, setMovements] = useState<InventoryMovementRow[]>([]);
@@ -61,6 +71,7 @@ export function InventoryPage() {
   const [loadingBoot, setLoadingBoot] = useState(true);
   const [loadingMovements, setLoadingMovements] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [revertingMovementId, setRevertingMovementId] = useState<number | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   async function reloadProducts(preferProductId?: string) {
@@ -168,6 +179,53 @@ export function InventoryPage() {
       setNotice({ tone: "error", text: toErrorMessage(error) });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleRevertMovement(movement: InventoryMovementRow) {
+    if (!canRevertMovement(movement)) {
+      setNotice({ tone: "info", text: "Ese movimiento no se puede revertir desde inventario." });
+      return;
+    }
+
+    const fromSale =
+      (movement.referenceType === "sale" || movement.referenceType === "internal_consumption") &&
+      (movement.referenceId ?? 0) > 0;
+    const confirmed = window.confirm(fromSale
+      ? `Revertir venta #${movement.referenceId}? Se restaura stock y se eliminan pagos/deuda de esa venta.`
+      : `Revertir movimiento #${movement.id} de ${movement.productName}? Se registrara un movimiento inverso.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setRevertingMovementId(movement.id);
+    try {
+      if (fromSale && movement.referenceId) {
+        const result = await reverseSale({
+          saleId: movement.referenceId,
+          reason: "Reversion desde movimientos de inventario",
+        });
+        setNotice({
+          tone: "ok",
+          text: `Venta #${result.saleId} revertida. Unidades restauradas: ${formatInteger(result.restoredUnits)}.`,
+        });
+        await Promise.all([reloadProducts(), reloadMovements()]);
+      } else {
+        const result = await reverseStockMovement({
+          movementId: movement.id,
+          reason: "Reversion manual desde inventario",
+        });
+        setNotice({
+          tone: "ok",
+          text: `Movimiento #${result.movementId} revertido. Stock actual de ${result.product.name}: ${formatInteger(result.product.stock)}.`,
+        });
+        await Promise.all([reloadProducts(String(result.product.id)), reloadMovements()]);
+      }
+    } catch (error) {
+      setNotice({ tone: "error", text: toErrorMessage(error) });
+    } finally {
+      setRevertingMovementId(null);
     }
   }
 
@@ -317,12 +375,13 @@ export function InventoryPage() {
                 <th>Antes</th>
                 <th>Despues</th>
                 <th>Nota</th>
+                <th>Accion</th>
               </tr>
             </thead>
             <tbody>
               {movements.length <= 0 ? (
                 <tr>
-                  <td colSpan={7} className="table-empty">
+                  <td colSpan={8} className="table-empty">
                     Sin movimientos para este filtro.
                   </td>
                 </tr>
@@ -336,6 +395,19 @@ export function InventoryPage() {
                     <td>{formatInteger(movement.stockBefore)}</td>
                     <td>{formatInteger(movement.stockAfter)}</td>
                     <td>{movement.note || "-"}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="button-soft button-xs"
+                        onClick={() => void handleRevertMovement(movement)}
+                        disabled={
+                          !canRevertMovement(movement) ||
+                          revertingMovementId === movement.id
+                        }
+                      >
+                        {revertingMovementId === movement.id ? "Revirtiendo..." : "Revertir"}
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}

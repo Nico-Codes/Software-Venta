@@ -151,6 +151,29 @@ struct CategoryDeleteResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct DeletedCategoryArchiveRow {
+    archive_id: i64,
+    original_category_id: i64,
+    name: String,
+    margin_percent: f64,
+    deleted_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RestoreDeletedCategoryRequest {
+    archive_id: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RestoreDeletedCategoryResponse {
+    archive_id: i64,
+    category: CategoryAdminSummary,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProductAdminRow {
     id: i64,
     name: String,
@@ -191,6 +214,8 @@ struct StockMovementSummary {
     stock_after: f64,
     product_name: String,
     barcode: Option<String>,
+    reference_type: Option<String>,
+    reference_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -206,6 +231,8 @@ struct InventoryMovementRow {
     product_name: String,
     barcode: Option<String>,
     note: Option<String>,
+    reference_type: Option<String>,
+    reference_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -224,6 +251,23 @@ struct RegisterInventoryMovementResponse {
     message: String,
     product: ProductSummary,
     movement: InventoryMovementRow,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReverseStockMovementRequest {
+    movement_id: i64,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReverseStockMovementResponse {
+    movement_id: i64,
+    reversal_movement_id: i64,
+    reversed_at: String,
+    product: ProductSummary,
+    quantity_reverted: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,9 +307,46 @@ struct CreateSaleResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ReverseSaleRequest {
+    sale_id: i64,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReverseSaleResponse {
+    sale_id: i64,
+    reversed_at: String,
+    restored_items: i64,
+    restored_units: f64,
+    removed_payments: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QuickStockLookupProduct {
+    id: i64,
+    name: String,
+    barcode: Option<String>,
+    stock: f64,
+    cost: f64,
+    sale_price: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QuickStockLookupResponse {
+    found: bool,
+    message: String,
+    product: Option<QuickStockLookupProduct>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct QuickStockAddRequest {
     barcode: String,
     quantity: f64,
+    unit_cost: Option<f64>,
     note: Option<String>,
 }
 
@@ -1294,6 +1375,48 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS deleted_category_archives (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_category_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            margin_percent REAL NOT NULL,
+            deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            deleted_by_user_id INTEGER,
+            FOREIGN KEY (deleted_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sale_reversals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sale_id INTEGER NOT NULL UNIQUE,
+            sold_at TEXT,
+            payment_method TEXT,
+            sale_type TEXT,
+            status TEXT,
+            customer_id INTEGER,
+            total REAL NOT NULL DEFAULT 0,
+            paid_amount REAL NOT NULL DEFAULT 0,
+            balance_due REAL NOT NULL DEFAULT 0,
+            items_count INTEGER NOT NULL DEFAULT 0,
+            reversed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reversed_by_user_id INTEGER,
+            reason TEXT,
+            FOREIGN KEY (reversed_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_movement_reversals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            movement_id INTEGER NOT NULL UNIQUE,
+            reversal_movement_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            reversed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reversed_by_user_id INTEGER,
+            reason TEXT,
+            FOREIGN KEY (movement_id) REFERENCES stock_movements(id) ON DELETE CASCADE,
+            FOREIGN KEY (reversal_movement_id) REFERENCES stock_movements(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
+            FOREIGN KEY (reversed_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+
         CREATE TABLE IF NOT EXISTS product_favorites (
             product_id INTEGER PRIMARY KEY,
             sort_order INTEGER NOT NULL DEFAULT 0,
@@ -1328,6 +1451,9 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_payments_customer ON payments(customer_id);
         CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
         CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+        CREATE INDEX IF NOT EXISTS idx_deleted_category_archives_deleted_at ON deleted_category_archives(deleted_at);
+        CREATE INDEX IF NOT EXISTS idx_sale_reversals_reversed_at ON sale_reversals(reversed_at);
+        CREATE INDEX IF NOT EXISTS idx_stock_movement_reversals_reversed_at ON stock_movement_reversals(reversed_at);
         CREATE INDEX IF NOT EXISTS idx_ticket_prints_sale ON ticket_prints(sale_id);
         CREATE INDEX IF NOT EXISTS idx_ticket_prints_printed_at ON ticket_prints(printed_at);
     ",
@@ -1872,6 +1998,25 @@ fn normalize_inventory_movement_type(raw: &str) -> Result<String, String> {
         "manual_in" | "entrada" | "ingreso" => "manual_in",
         "manual_out" | "salida" | "egreso" => "manual_out",
         "adjustment" | "ajuste" => "adjustment",
+        _ => return Err("Tipo de movimiento invalido".to_string()),
+    };
+    Ok(normalized.to_string())
+}
+
+fn normalize_inventory_movement_filter_type(raw: &str) -> Result<String, String> {
+    let clean = raw
+        .trim()
+        .to_lowercase()
+        .replace('\u{00E1}', "a")
+        .replace('\u{00E9}', "e")
+        .replace('\u{00ED}', "i")
+        .replace('\u{00F3}', "o")
+        .replace('\u{00FA}', "u");
+    let normalized = match clean.as_str() {
+        "manual_in" | "entrada" | "ingreso" => "manual_in",
+        "manual_out" | "salida" | "egreso" => "manual_out",
+        "adjustment" | "ajuste" => "adjustment",
+        "sale" | "venta" => "sale",
         _ => return Err("Tipo de movimiento invalido".to_string()),
     };
     Ok(normalized.to_string())
@@ -3493,8 +3638,8 @@ fn delete_category(app: AppHandle, category_id: i64) -> Result<CategoryDeleteRes
         return Err("Categoria invalida".to_string());
     }
 
-    let conn = open_db(&app)?;
-    let _admin = require_admin_user(&conn)?;
+    let mut conn = open_db(&app)?;
+    let admin = require_admin_user(&conn)?;
     let product_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM products WHERE category_id = ?",
@@ -3506,14 +3651,132 @@ fn delete_category(app: AppHandle, category_id: i64) -> Result<CategoryDeleteRes
         return Err("No se puede eliminar una categoria con productos asociados".to_string());
     }
 
-    let affected = conn
+    let (category_name, margin_percent): (String, f64) = conn
+        .query_row(
+            "SELECT name, margin_percent FROM categories WHERE id = ? LIMIT 1",
+            params![category_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo consultar categoria para eliminar", e))?
+        .ok_or_else(|| "Categoria no encontrada".to_string())?;
+
+    let tx = conn
+        .transaction()
+        .map_err(|e| db_error("No se pudo iniciar transaccion de categoria", e))?;
+
+    tx.execute(
+        "
+        INSERT INTO deleted_category_archives(
+            original_category_id, name, margin_percent, deleted_by_user_id
+        ) VALUES (?, ?, ?, ?)
+    ",
+        params![category_id, category_name, margin_percent, admin.id],
+    )
+    .map_err(|e| db_error("No se pudo archivar categoria eliminada", e))?;
+
+    let affected = tx
         .execute("DELETE FROM categories WHERE id = ?", params![category_id])
         .map_err(|e| db_error("No se pudo eliminar categoria", e))?;
     if affected == 0 {
         return Err("Categoria no encontrada".to_string());
     }
 
+    tx.commit()
+        .map_err(|e| db_error("No se pudo confirmar eliminacion de categoria", e))?;
+
     Ok(CategoryDeleteResponse { id: category_id })
+}
+
+#[tauri::command]
+fn list_deleted_categories(app: AppHandle) -> Result<Vec<DeletedCategoryArchiveRow>, String> {
+    let conn = open_db(&app)?;
+    let _admin = require_admin_user(&conn)?;
+
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT id, original_category_id, name, margin_percent, deleted_at
+            FROM deleted_category_archives
+            ORDER BY deleted_at DESC, id DESC
+        ",
+        )
+        .map_err(|e| db_error("No se pudo preparar categorias eliminadas", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(DeletedCategoryArchiveRow {
+                archive_id: row.get(0)?,
+                original_category_id: row.get(1)?,
+                name: row.get(2)?,
+                margin_percent: row.get(3)?,
+                deleted_at: row.get(4)?,
+            })
+        })
+        .map_err(|e| db_error("No se pudo listar categorias eliminadas", e))?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| db_error("No se pudo mapear categoria eliminada", e))?);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn restore_deleted_category(
+    app: AppHandle,
+    payload: RestoreDeletedCategoryRequest,
+) -> Result<RestoreDeletedCategoryResponse, String> {
+    if payload.archive_id <= 0 {
+        return Err("Registro de categoria eliminado invalido".to_string());
+    }
+
+    let mut conn = open_db(&app)?;
+    let _admin = require_admin_user(&conn)?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| db_error("No se pudo iniciar transaccion para restaurar categoria", e))?;
+
+    let (archive_id, category_name, margin_percent): (i64, String, f64) = tx
+        .query_row(
+            "
+            SELECT id, name, margin_percent
+            FROM deleted_category_archives
+            WHERE id = ?
+            LIMIT 1
+        ",
+            params![payload.archive_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo consultar categoria eliminada", e))?
+        .ok_or_else(|| "Registro de categoria eliminada no encontrado".to_string())?;
+
+    tx.execute(
+        "INSERT INTO categories(name, margin_percent) VALUES (?, ?)",
+        params![category_name, margin_percent],
+    )
+    .map_err(|e| {
+        db_error(
+            "No se pudo restaurar categoria (puede existir otra con el mismo nombre)",
+            e,
+        )
+    })?;
+    let new_category_id = tx.last_insert_rowid();
+
+    tx.execute(
+        "DELETE FROM deleted_category_archives WHERE id = ?",
+        params![archive_id],
+    )
+    .map_err(|e| db_error("No se pudo limpiar archivo de categoria restaurada", e))?;
+
+    tx.commit()
+        .map_err(|e| db_error("No se pudo confirmar restauracion de categoria", e))?;
+
+    Ok(RestoreDeletedCategoryResponse {
+        archive_id,
+        category: read_category_admin(&conn, new_category_id)?,
+    })
 }
 
 #[tauri::command]
@@ -3598,8 +3861,8 @@ fn create_product(app: AppHandle, payload: CreateProductRequest) -> Result<Produ
     if clean_name.is_empty() {
         return Err("El nombre del producto es obligatorio".to_string());
     }
-    if payload.cost < 0.0 {
-        return Err("El costo no puede ser negativo".to_string());
+    if payload.cost <= 0.0 {
+        return Err("El costo inicial debe ser mayor a cero".to_string());
     }
     if payload.stock <= 0.0 {
         return Err("El stock inicial debe ser mayor a cero".to_string());
@@ -3814,7 +4077,7 @@ fn inventory_list_movements(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(normalize_inventory_movement_type)
+        .map(normalize_inventory_movement_filter_type)
         .transpose()?;
 
     let mut stmt = conn
@@ -3822,7 +4085,8 @@ fn inventory_list_movements(
             "
             SELECT
                 m.id, m.created_at, m.movement_type, m.quantity,
-                m.stock_before, m.stock_after, p.id, p.name, p.barcode, m.note
+                m.stock_before, m.stock_after, p.id, p.name, p.barcode, m.note,
+                m.reference_type, m.reference_id
             FROM stock_movements m
             JOIN products p ON p.id = m.product_id
             WHERE (? = '' OR p.name LIKE ? OR p.barcode LIKE ?)
@@ -3855,6 +4119,8 @@ fn inventory_list_movements(
                     product_name: row.get(7)?,
                     barcode: row.get(8)?,
                     note: row.get(9)?,
+                    reference_type: row.get(10)?,
+                    reference_id: row.get(11)?,
                 })
             },
         )
@@ -4023,7 +4289,192 @@ fn register_inventory_movement(
             } else {
                 Some(note_text)
             },
+            reference_type: Some("manual".to_string()),
+            reference_id: None,
         },
+    })
+}
+
+#[tauri::command]
+fn reverse_stock_movement(
+    app: AppHandle,
+    payload: ReverseStockMovementRequest,
+) -> Result<ReverseStockMovementResponse, String> {
+    if payload.movement_id <= 0 {
+        return Err("Movimiento invalido".to_string());
+    }
+
+    let mut conn = open_db(&app)?;
+    let admin = require_admin_user(&conn)?;
+    let reason_text = payload.reason.unwrap_or_default().trim().to_string();
+    let tx = conn
+        .transaction()
+        .map_err(|e| db_error("No se pudo iniciar transaccion de reversion", e))?;
+
+    let already_reversed: Option<i64> = tx
+        .query_row(
+            "SELECT reversal_movement_id FROM stock_movement_reversals WHERE movement_id = ? LIMIT 1",
+            params![payload.movement_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo validar estado de reversion de movimiento", e))?;
+    if already_reversed.is_some() {
+        return Err("Ese movimiento ya fue revertido".to_string());
+    }
+
+    let (
+        movement_id,
+        product_id,
+        movement_type,
+        quantity,
+        unit_cost,
+        reference_type,
+        product_name,
+        barcode,
+        sale_price,
+        current_stock,
+    ): (i64, i64, String, f64, f64, Option<String>, String, Option<String>, f64, f64) = tx
+        .query_row(
+            "
+            SELECT
+                m.id, m.product_id, m.movement_type, m.quantity,
+                COALESCE(m.unit_cost, p.cost), m.reference_type,
+                p.name, p.barcode, p.sale_price, p.stock
+            FROM stock_movements m
+            JOIN products p ON p.id = m.product_id
+            WHERE m.id = ?
+            LIMIT 1
+        ",
+            params![payload.movement_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    round_integer(row.get::<_, f64>(3)?),
+                    round_integer(row.get::<_, f64>(4)?),
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    round_integer(row.get::<_, f64>(8)?),
+                    round_integer(row.get::<_, f64>(9)?),
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo consultar movimiento para revertir", e))?
+        .ok_or_else(|| "Movimiento no encontrado".to_string())?;
+
+    if !matches!(movement_type.as_str(), "manual_in" | "manual_out" | "adjustment") {
+        return Err("Solo se pueden revertir movimientos manuales o ajustes".to_string());
+    }
+
+    if let Some(reference) = reference_type.as_deref() {
+        if reference == "sale" || reference == "internal_consumption" {
+            return Err(
+                "Este movimiento proviene de una venta. Reverti la venta completa.".to_string(),
+            );
+        }
+        if reference == "sale_reversal" || reference == "stock_reversal" {
+            return Err("No se puede revertir una reversion previa".to_string());
+        }
+    }
+
+    let quantity_reverted = round_integer(-quantity);
+    if quantity_reverted.abs() <= 1e-9 {
+        return Err("Movimiento sin cantidad para revertir".to_string());
+    }
+    let stock_after = round_integer(current_stock + quantity_reverted);
+    if stock_after < 0.0 {
+        return Err("No se puede revertir porque el stock quedaria negativo".to_string());
+    }
+    let reversal_type = if quantity_reverted >= 0.0 {
+        "manual_in".to_string()
+    } else {
+        "manual_out".to_string()
+    };
+    let reversal_note = if reason_text.is_empty() {
+        format!("Reversion movimiento #{movement_id}")
+    } else {
+        format!("Reversion movimiento #{movement_id}: {reason_text}")
+    };
+
+    tx.execute(
+        "
+        UPDATE products
+        SET stock = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    ",
+        params![stock_after, product_id],
+    )
+    .map_err(|e| db_error("No se pudo actualizar stock al revertir movimiento", e))?;
+
+    tx.execute(
+        "
+        INSERT INTO stock_movements(
+            product_id, movement_type, quantity, stock_before,
+            stock_after, unit_cost, reference_type, reference_id, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ",
+        params![
+            product_id,
+            reversal_type,
+            quantity_reverted,
+            current_stock,
+            stock_after,
+            unit_cost,
+            "stock_reversal",
+            movement_id,
+            reversal_note
+        ],
+    )
+    .map_err(|e| db_error("No se pudo registrar movimiento de reversion", e))?;
+    let reversal_movement_id = tx.last_insert_rowid();
+
+    tx.execute(
+        "
+        INSERT INTO stock_movement_reversals(
+            movement_id, reversal_movement_id, product_id, reversed_by_user_id, reason
+        ) VALUES (?, ?, ?, ?, ?)
+    ",
+        params![
+            movement_id,
+            reversal_movement_id,
+            product_id,
+            admin.id,
+            if reason_text.is_empty() {
+                None::<String>
+            } else {
+                Some(reason_text.clone())
+            }
+        ],
+    )
+    .map_err(|e| db_error("No se pudo guardar auditoria de reversion de movimiento", e))?;
+
+    let reversed_at: String = tx
+        .query_row(
+            "SELECT reversed_at FROM stock_movement_reversals WHERE movement_id = ?",
+            params![movement_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| db_error("No se pudo leer fecha de reversion de movimiento", e))?;
+
+    tx.commit()
+        .map_err(|e| db_error("No se pudo confirmar reversion de movimiento", e))?;
+
+    Ok(ReverseStockMovementResponse {
+        movement_id,
+        reversal_movement_id,
+        reversed_at,
+        product: ProductSummary {
+            id: product_id,
+            name: product_name,
+            barcode,
+            sale_price,
+            stock: stock_after,
+        },
+        quantity_reverted,
     })
 }
 
@@ -4040,7 +4491,7 @@ fn list_recent_stock_movements(
             "
             SELECT
                 m.id, m.created_at, m.movement_type, m.quantity,
-                m.stock_before, m.stock_after, p.name, p.barcode
+                m.stock_before, m.stock_after, p.name, p.barcode, m.reference_type, m.reference_id
             FROM stock_movements m
             JOIN products p ON p.id = m.product_id
             ORDER BY m.created_at DESC, m.id DESC
@@ -4060,6 +4511,8 @@ fn list_recent_stock_movements(
                 stock_after: row.get(5)?,
                 product_name: row.get(6)?,
                 barcode: row.get(7)?,
+                reference_type: row.get(8)?,
+                reference_id: row.get(9)?,
             })
         })
         .map_err(|e| db_error("No se pudo listar movimientos", e))?;
@@ -4069,6 +4522,56 @@ fn list_recent_stock_movements(
         result.push(row.map_err(|e| db_error("No se pudo mapear movimiento", e))?);
     }
     Ok(result)
+}
+
+#[tauri::command]
+fn quick_stock_lookup_by_barcode(
+    app: AppHandle,
+    barcode: String,
+) -> Result<QuickStockLookupResponse, String> {
+    let conn = open_db(&app)?;
+    let _admin = require_admin_user(&conn)?;
+    let clean_barcode = barcode.trim().to_string();
+    if clean_barcode.is_empty() {
+        return Err("Escanea o ingresa un codigo de barras".to_string());
+    }
+
+    let maybe_product = conn
+        .query_row(
+            "
+            SELECT id, name, barcode, stock, cost, sale_price
+            FROM products
+            WHERE active = 1 AND barcode = ?
+            LIMIT 1
+        ",
+            params![clean_barcode],
+            |row| {
+                Ok(QuickStockLookupProduct {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    barcode: row.get(2)?,
+                    stock: round_integer(row.get::<_, f64>(3)?),
+                    cost: round_integer(row.get::<_, f64>(4)?),
+                    sale_price: round_integer(row.get::<_, f64>(5)?),
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo buscar producto para stock", e))?;
+
+    match maybe_product {
+        Some(product) => Ok(QuickStockLookupResponse {
+            found: true,
+            message: "Producto encontrado. Confirma cantidad y costo para agregar stock."
+                .to_string(),
+            product: Some(product),
+        }),
+        None => Ok(QuickStockLookupResponse {
+            found: false,
+            message: "Producto no encontrado. Crea el producto completo.".to_string(),
+            product: None,
+        }),
+    }
 }
 
 #[tauri::command]
@@ -4090,9 +4593,11 @@ fn quick_stock_add_by_barcode(
     let maybe_product = conn
         .query_row(
             "
-            SELECT id, name, barcode, sale_price, stock, cost
-            FROM products
-            WHERE active = 1 AND barcode = ?
+            SELECT
+                p.id, p.name, p.barcode, p.sale_price, p.stock, p.cost, p.auto_price, c.margin_percent
+            FROM products p
+            JOIN categories c ON c.id = p.category_id
+            WHERE p.active = 1 AND p.barcode = ?
             LIMIT 1
         ",
             params![clean_barcode],
@@ -4101,17 +4606,27 @@ fn quick_stock_add_by_barcode(
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
-                    row.get::<_, f64>(3)?,
-                    row.get::<_, f64>(4)?,
-                    row.get::<_, f64>(5)?,
+                    round_integer(row.get::<_, f64>(3)?),
+                    round_integer(row.get::<_, f64>(4)?),
+                    round_integer(row.get::<_, f64>(5)?),
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, f64>(7)?,
                 ))
             },
         )
         .optional()
         .map_err(|e| db_error("No se pudo buscar producto para stock", e))?;
 
-    let Some((product_id, product_name, barcode, sale_price, stock_before, unit_cost)) =
-        maybe_product
+    let Some((
+        product_id,
+        product_name,
+        barcode,
+        current_sale_price,
+        stock_before,
+        current_cost,
+        auto_price_raw,
+        category_margin_percent,
+    )) = maybe_product
     else {
         return Ok(QuickStockAddResponse {
             found: false,
@@ -4119,6 +4634,25 @@ fn quick_stock_add_by_barcode(
             product: None,
             movement_id: None,
         });
+    };
+
+    let entered_cost = payload.unit_cost.map(round_integer);
+    if let Some(cost_value) = entered_cost {
+        if cost_value <= 0.0 {
+            return Err("El costo debe ser mayor a cero".to_string());
+        }
+    }
+    let next_cost = entered_cost.unwrap_or(current_cost);
+    let auto_price_enabled = auto_price_raw == 1;
+    let next_sale_price = if entered_cost.is_some() && auto_price_enabled {
+        let rounding_base = get_rounding_base(&conn);
+        round_integer(calculate_auto_price(
+            next_cost,
+            category_margin_percent,
+            rounding_base,
+        ))
+    } else {
+        current_sale_price
     };
 
     let stock_after = round_integer(stock_before + quantity);
@@ -4130,10 +4664,10 @@ fn quick_stock_add_by_barcode(
     tx.execute(
         "
         UPDATE products
-        SET stock = ?, updated_at = CURRENT_TIMESTAMP
+        SET stock = ?, cost = ?, sale_price = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     ",
-        params![stock_after, product_id],
+        params![stock_after, next_cost, next_sale_price, product_id],
     )
     .map_err(|e| db_error("No se pudo actualizar stock", e))?;
 
@@ -4150,7 +4684,7 @@ fn quick_stock_add_by_barcode(
             quantity,
             stock_before,
             stock_after,
-            unit_cost,
+            next_cost,
             "manual",
             Option::<i64>::None,
             if note_text.is_empty() {
@@ -4172,7 +4706,7 @@ fn quick_stock_add_by_barcode(
             id: product_id,
             name: product_name,
             barcode,
-            sale_price,
+            sale_price: next_sale_price,
             stock: stock_after,
         }),
         movement_id: Some(movement_id),
@@ -5193,6 +5727,221 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
 }
 
 #[tauri::command]
+fn reverse_sale(app: AppHandle, payload: ReverseSaleRequest) -> Result<ReverseSaleResponse, String> {
+    if payload.sale_id <= 0 {
+        return Err("Venta invalida".to_string());
+    }
+
+    let mut conn = open_db(&app)?;
+    let admin = require_admin_user(&conn)?;
+    let reason_text = payload.reason.unwrap_or_default().trim().to_string();
+    let tx = conn
+        .transaction()
+        .map_err(|e| db_error("No se pudo iniciar transaccion de reversion de venta", e))?;
+
+    let already_reversed: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM sale_reversals WHERE sale_id = ? LIMIT 1",
+            params![payload.sale_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo validar estado de reversion de venta", e))?;
+    if already_reversed.is_some() {
+        return Err("Esa venta ya fue revertida".to_string());
+    }
+
+    let (
+        sold_at,
+        payment_method,
+        sale_type,
+        status,
+        customer_id,
+        total,
+        paid_amount,
+        balance_due,
+    ): (String, String, String, String, Option<i64>, f64, f64, f64) = tx
+        .query_row(
+            "
+            SELECT
+                sold_at, payment_method, COALESCE(sale_type, 'cash'), COALESCE(status, 'paid'),
+                customer_id, total, paid_amount, balance_due
+            FROM sales
+            WHERE id = ?
+            LIMIT 1
+        ",
+            params![payload.sale_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    round_integer(row.get::<_, f64>(5)?),
+                    round_integer(row.get::<_, f64>(6)?),
+                    round_integer(row.get::<_, f64>(7)?),
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo consultar venta para revertir", e))?
+        .ok_or_else(|| "Venta no encontrada".to_string())?;
+
+    let mut item_stmt = tx
+        .prepare(
+            "
+            SELECT product_id, product_name, quantity, cost_at_sale
+            FROM sale_items
+            WHERE sale_id = ?
+            ORDER BY id ASC
+        ",
+        )
+        .map_err(|e| db_error("No se pudo preparar items de venta para revertir", e))?;
+    let item_rows = item_stmt
+        .query_map(params![payload.sale_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                round_integer(row.get::<_, f64>(2)?),
+                round_integer(row.get::<_, f64>(3)?),
+            ))
+        })
+        .map_err(|e| db_error("No se pudieron listar items de venta para revertir", e))?;
+
+    let mut items: Vec<(i64, String, f64, f64)> = Vec::new();
+    for row in item_rows {
+        items.push(row.map_err(|e| db_error("No se pudo mapear item de venta para revertir", e))?);
+    }
+    drop(item_stmt);
+    if items.is_empty() {
+        return Err("La venta no tiene items para revertir".to_string());
+    }
+
+    let mut restored_units = 0.0;
+    for (product_id, product_name, quantity, cost_at_sale) in &items {
+        let current_stock: f64 = tx
+            .query_row(
+                "SELECT stock FROM products WHERE id = ? LIMIT 1",
+                params![product_id],
+                |row| Ok(round_integer(row.get::<_, f64>(0)?)),
+            )
+            .optional()
+            .map_err(|e| db_error("No se pudo consultar producto al revertir venta", e))?
+            .ok_or_else(|| format!("Producto no encontrado para revertir: {product_name}"))?;
+
+        let stock_after = round_integer(current_stock + quantity);
+        tx.execute(
+            "
+            UPDATE products
+            SET stock = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ",
+            params![stock_after, product_id],
+        )
+        .map_err(|e| db_error("No se pudo restaurar stock al revertir venta", e))?;
+
+        let movement_note = if reason_text.is_empty() {
+            format!("Reversion venta #{}", payload.sale_id)
+        } else {
+            format!("Reversion venta #{}: {reason_text}", payload.sale_id)
+        };
+        tx.execute(
+            "
+            INSERT INTO stock_movements(
+                product_id, movement_type, quantity, stock_before,
+                stock_after, unit_cost, reference_type, reference_id, note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ",
+            params![
+                product_id,
+                "manual_in",
+                quantity,
+                current_stock,
+                stock_after,
+                cost_at_sale,
+                "sale_reversal",
+                payload.sale_id,
+                movement_note
+            ],
+        )
+        .map_err(|e| db_error("No se pudo registrar movimiento de reversion de venta", e))?;
+
+        restored_units = round_integer(restored_units + quantity);
+    }
+
+    tx.execute(
+        "
+        INSERT INTO sale_reversals(
+            sale_id, sold_at, payment_method, sale_type, status,
+            customer_id, total, paid_amount, balance_due,
+            items_count, reversed_by_user_id, reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ",
+        params![
+            payload.sale_id,
+            sold_at,
+            payment_method,
+            sale_type,
+            status,
+            customer_id,
+            total,
+            paid_amount,
+            balance_due,
+            items.len() as i64,
+            admin.id,
+            if reason_text.is_empty() {
+                None::<String>
+            } else {
+                Some(reason_text.clone())
+            }
+        ],
+    )
+    .map_err(|e| db_error("No se pudo guardar auditoria de reversion de venta", e))?;
+
+    let removed_payments = tx
+        .execute("DELETE FROM payments WHERE sale_id = ?", params![payload.sale_id])
+        .map_err(|e| db_error("No se pudieron limpiar pagos de la venta revertida", e))?
+        as i64;
+
+    tx.execute(
+        "
+        DELETE FROM stock_movements
+        WHERE reference_id = ?
+          AND reference_type IN ('sale', 'internal_consumption')
+    ",
+        params![payload.sale_id],
+    )
+    .map_err(|e| db_error("No se pudieron limpiar movimientos originales de la venta", e))?;
+
+    let deleted_sales = tx
+        .execute("DELETE FROM sales WHERE id = ?", params![payload.sale_id])
+        .map_err(|e| db_error("No se pudo eliminar venta revertida", e))?;
+    if deleted_sales == 0 {
+        return Err("Venta no encontrada para eliminar".to_string());
+    }
+
+    let reversed_at: String = tx
+        .query_row(
+            "SELECT reversed_at FROM sale_reversals WHERE sale_id = ?",
+            params![payload.sale_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| db_error("No se pudo leer fecha de reversion de venta", e))?;
+
+    tx.commit()
+        .map_err(|e| db_error("No se pudo confirmar reversion de venta", e))?;
+
+    Ok(ReverseSaleResponse {
+        sale_id: payload.sale_id,
+        reversed_at,
+        restored_items: items.len() as i64,
+        restored_units,
+        removed_payments,
+    })
+}
+
+#[tauri::command]
 fn ticket_settings(app: AppHandle) -> Result<TicketSettingsResponse, String> {
     let conn = open_db(&app)?;
     let _admin = require_admin_user(&conn)?;
@@ -5557,17 +6306,22 @@ fn main() {
             create_category,
             update_category,
             delete_category,
+            list_deleted_categories,
+            restore_deleted_category,
             list_products_admin,
             create_product,
             update_product,
             inventory_list_movements,
             register_inventory_movement,
+            reverse_stock_movement,
             list_recent_stock_movements,
+            quick_stock_lookup_by_barcode,
             quick_stock_add_by_barcode,
             dashboard_snapshot,
             dashboard_executive,
             sales_report,
             create_sale,
+            reverse_sale,
             ticket_settings,
             update_ticket_settings,
             generate_sale_ticket,
