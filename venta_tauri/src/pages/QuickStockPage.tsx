@@ -1,5 +1,6 @@
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
 
+import { CriticalAlertPopup } from "../components/CriticalAlertPopup";
 import { Icon } from "../components/Icon";
 import {
   createProduct,
@@ -107,6 +108,7 @@ export function QuickStockPage() {
   const [movements, setMovements] = useState<StockMovementSummary[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [criticalNotice, setCriticalNotice] = useState<Notice | null>(null);
 
   async function refreshMovements() {
     setLoadingMovement(true);
@@ -158,6 +160,13 @@ export function QuickStockPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!notice || notice.tone !== "error") {
+      return;
+    }
+    setCriticalNotice(notice);
+  }, [notice]);
+
   async function handleAddStock() {
     const cleanBarcode = barcodeInput.trim();
     if (!cleanBarcode) {
@@ -208,6 +217,11 @@ export function QuickStockPage() {
     setConfirmProduct(null);
     setConfirmQuantityInput("1");
     setConfirmCostInput("0");
+    barcodeInputRef.current?.focus();
+  }
+
+  function closeCriticalNotice() {
+    setCriticalNotice(null);
     barcodeInputRef.current?.focus();
   }
 
@@ -399,7 +413,14 @@ export function QuickStockPage() {
   }
 
   return (
-    <section className="panel quick-stock-panel">
+    <>
+      <CriticalAlertPopup
+        open={Boolean(criticalNotice)}
+        title="Error operativo"
+        message={criticalNotice?.text ?? ""}
+        onClose={closeCriticalNotice}
+      />
+      <section className="panel quick-stock-panel">
       <header className="panel-header-row">
         <div>
           <h2>Agregar stock rapido</h2>
@@ -711,6 +732,7 @@ export function QuickStockPage() {
           </table>
         </div>
       </section>
-    </section>
+      </section>
+    </>
   );
 }

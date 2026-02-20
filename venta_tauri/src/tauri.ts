@@ -64,7 +64,7 @@ function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-export const APP_FALLBACK_VERSION = "1.0.10";
+export const APP_FALLBACK_VERSION = "1.0.11";
 
 function stringifyInvokeError(error: unknown): string {
   if (typeof error === "string") {

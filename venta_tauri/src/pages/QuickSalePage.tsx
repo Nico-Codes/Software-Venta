@@ -1,5 +1,6 @@
 ﻿import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { CriticalAlertPopup } from "../components/CriticalAlertPopup";
 import { Icon } from "../components/Icon";
 import {
   createSale,
@@ -165,6 +166,7 @@ export function QuickSalePage() {
   const [revertSaleInput, setRevertSaleInput] = useState("");
   const [revertingSale, setRevertingSale] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [criticalNotice, setCriticalNotice] = useState<Notice | null>(null);
 
   const total = useMemo(
     () => roundInteger(cart.reduce((acc, item) => acc + item.qty * item.salePrice, 0)),
@@ -307,6 +309,13 @@ export function QuickSalePage() {
     }
   }, [lastSaleId]);
 
+  useEffect(() => {
+    if (!notice || notice.tone !== "error") {
+      return;
+    }
+    setCriticalNotice(notice);
+  }, [notice]);
+
   function focusScanner() {
     barcodeInputRef.current?.focus();
   }
@@ -322,6 +331,11 @@ export function QuickSalePage() {
 
   function focusDueDate() {
     dueDateInputRef.current?.focus();
+  }
+
+  function closeCriticalNotice() {
+    setCriticalNotice(null);
+    focusScanner();
   }
 
   function cyclePaymentMethod(step: 1 | -1) {
@@ -818,7 +832,14 @@ export function QuickSalePage() {
   ]);
 
   return (
-    <div className="view-grid sale-view-grid sale-view-simple">
+    <>
+      <CriticalAlertPopup
+        open={Boolean(criticalNotice)}
+        title="Error operativo"
+        message={criticalNotice?.text ?? ""}
+        onClose={closeCriticalNotice}
+      />
+      <div className="view-grid sale-view-grid sale-view-simple">
       <section className="panel feature-panel sale-main-panel">
         <header className="panel-header-row">
           <div>
@@ -1152,6 +1173,7 @@ export function QuickSalePage() {
           F10 primer rapido, Flechas carrito, +/- cantidad, Del quitar, Alt+1..6 metodo, Ctrl+L limpiar, Esc scanner.
         </small>
       </aside>
-    </div>
+      </div>
+    </>
   );
 }

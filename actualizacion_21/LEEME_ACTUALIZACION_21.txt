@@ -1,0 +1,16 @@
+﻿ACTUALIZACION 21 - BUEN TRAGO v1.0.11
+
+Contenido:
+- installador_windows/BUEN TRAGO_1.0.11_x64-setup.exe
+- installador_windows/BUEN TRAGO_1.0.11_x64_en-US.msi
+- scripts/ACTUALIZAR_WINDOWS.txt
+
+Instalacion recomendada:
+1) Cerrar BUEN TRAGO.
+2) Ejecutar el setup .exe como administrador.
+3) En caso de pregunta "Already Installed", seleccionar "Uninstall before installing".
+4) Finalizar instalacion.
+5) Abrir BUEN TRAGO y validar version 1.0.11 en la interfaz.
+
+Nota:
+- La base de datos local del usuario no se borra por actualizar version.
