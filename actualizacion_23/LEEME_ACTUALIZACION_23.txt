@@ -1,0 +1,21 @@
+﻿ACTUALIZACION 23 - BUEN TRAGO v1.0.13
+
+Mejoras incluidas:
+- Pantalla Combos: carga rapida de productos con lector de codigo de barras.
+- Pantalla Combos: busqueda de productos por nombre (y coincidencia por codigo).
+- Flujo de carga optimizado para operador en mostrador.
+
+Contenido:
+- installador_windows/BUEN TRAGO_1.0.13_x64-setup.exe
+- installador_windows/BUEN TRAGO_1.0.13_x64_en-US.msi
+- scripts/ACTUALIZAR_WINDOWS.txt
+
+Instalacion recomendada:
+1) Cerrar BUEN TRAGO.
+2) Ejecutar el setup .exe como administrador.
+3) Si aparece "Already Installed", elegir "Uninstall before installing".
+4) Finalizar instalacion y abrir BUEN TRAGO.
+5) Verificar en interfaz que figura version 1.0.13.
+
+Nota:
+- La base de datos local del usuario no se borra al actualizar.

@@ -10,6 +10,7 @@ import { QuickSalePage } from "./pages/QuickSalePage";
 import { QuickStockPage } from "./pages/QuickStockPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
+import { CombosPage } from "./pages/CombosPage";
 import { UsersPage } from "./pages/UsersPage";
 import { BackupPage } from "./pages/BackupPage";
 import { TicketsPage } from "./pages/TicketsPage";
@@ -53,6 +54,7 @@ const utilityEntries: NavEntry[] = [
   { key: "dashboard", label: "Dashboard", icon: "dashboard", hint: "KPIs" },
   { key: "products", label: "Productos", icon: "products", hint: "ABM" },
   { key: "categories", label: "Categorias", icon: "categories", hint: "Margenes" },
+  { key: "combos", label: "Combos", icon: "combos", hint: "Promociones" },
   { key: "inventory", label: "Inventario", icon: "inventory", hint: "Movimientos" },
   { key: "reports", label: "Reportes", icon: "reports", hint: "Metricas" },
   { key: "customers", label: "Clientes", icon: "customers", hint: "Deudas" },
@@ -296,6 +298,10 @@ export default function App() {
 
     if (activeSection === "inventory") {
       return <InventoryPage />;
+    }
+
+    if (activeSection === "combos") {
+      return <CombosPage />;
     }
 
     if (activeSection === "users") {

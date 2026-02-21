@@ -4,6 +4,7 @@ use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime};
 use pbkdf2::pbkdf2_hmac;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use sha2::Sha256;
 use std::env;
 use std::fs;
@@ -287,6 +288,8 @@ struct CreateSaleRequest {
     paid_amount: Option<f64>,
     initial_payment_method: Option<String>,
     due_date: Option<String>,
+    selected_combo_ids: Option<Vec<i64>>,
+    apply_combo_discount: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -295,6 +298,9 @@ struct CreateSaleResponse {
     sale_id: i64,
     sold_at: String,
     total: f64,
+    subtotal_before_discount: f64,
+    combo_discount_total: f64,
+    combo_matches: Vec<ComboMatch>,
     payment_method: String,
     sale_type: String,
     customer_id: Option<i64>,
@@ -303,6 +309,115 @@ struct CreateSaleResponse {
     due_date: Option<String>,
     status: String,
     initial_payment_method: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComboAdminItem {
+    id: i64,
+    product_id: i64,
+    product_name: String,
+    product_barcode: Option<String>,
+    quantity: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComboAdminRow {
+    id: i64,
+    name: String,
+    discount_percent: f64,
+    active: bool,
+    items: Vec<ComboAdminItem>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ComboItemInput {
+    product_id: i64,
+    quantity: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateComboRequest {
+    name: String,
+    discount_percent: f64,
+    active: bool,
+    items: Vec<ComboItemInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateComboRequest {
+    id: i64,
+    name: String,
+    discount_percent: f64,
+    active: bool,
+    items: Vec<ComboItemInput>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComboDeleteResponse {
+    id: i64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ComboMatchProduct {
+    product_id: i64,
+    product_name: String,
+    quantity: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ComboMatch {
+    combo_id: i64,
+    combo_name: String,
+    applications: i64,
+    discount_percent: f64,
+    discount_amount: f64,
+    products: Vec<ComboMatchProduct>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ComboChoiceOption {
+    combo_id: i64,
+    combo_name: String,
+    discount_percent: f64,
+    required_units: f64,
+    possible_applications: i64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ComboChoiceGroup {
+    signature: String,
+    suggested_combo_id: i64,
+    selected_combo_id: Option<i64>,
+    options: Vec<ComboChoiceOption>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComboPreviewResponse {
+    subtotal_before_discount: f64,
+    combo_discount_total: f64,
+    total_after_discount: f64,
+    matches: Vec<ComboMatch>,
+    ambiguous_groups: Vec<ComboChoiceGroup>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewSaleCombosRequest {
+    items: Vec<SaleItemInput>,
+    selected_combo_ids: Option<Vec<i64>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -798,6 +913,43 @@ const BACKUP_INTERVAL_HOURS_KEY: &str = "backup_interval_hours";
 const BACKUP_RETENTION_COUNT_KEY: &str = "backup_retention_count";
 const BACKUP_LAST_RUN_AT_KEY: &str = "backup_last_run_at";
 const DEFAULT_DUE_DAYS: i64 = 30;
+
+#[derive(Debug, Clone)]
+struct SaleResolvedLine {
+    product_id: i64,
+    product_name: String,
+    quantity: f64,
+    stock_before: f64,
+    stock_after: f64,
+    cost_at_sale: f64,
+    base_unit_price: f64,
+    base_subtotal: f64,
+}
+
+#[derive(Debug, Clone)]
+struct ComboDefinitionItem {
+    product_id: i64,
+    product_name: String,
+    quantity: f64,
+}
+
+#[derive(Debug, Clone)]
+struct ComboDefinition {
+    combo_id: i64,
+    combo_name: String,
+    discount_percent: f64,
+    items: Vec<ComboDefinitionItem>,
+}
+
+#[derive(Debug, Clone)]
+struct ComboDiscountOutcome {
+    subtotal_before_discount: f64,
+    combo_discount_total: f64,
+    total_after_discount: f64,
+    discount_by_product: HashMap<i64, f64>,
+    matches: Vec<ComboMatch>,
+    ambiguous_groups: Vec<ComboChoiceGroup>,
+}
 
 fn table_has_column(
     conn: &Connection,
@@ -1424,6 +1576,26 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS combos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            discount_percent REAL NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS combo_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            combo_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            quantity REAL NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (combo_id) REFERENCES combos(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
+            UNIQUE(combo_id, product_id)
+        );
+
         CREATE TABLE IF NOT EXISTS ticket_prints (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sale_id INTEGER NOT NULL,
@@ -1454,6 +1626,9 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_deleted_category_archives_deleted_at ON deleted_category_archives(deleted_at);
         CREATE INDEX IF NOT EXISTS idx_sale_reversals_reversed_at ON sale_reversals(reversed_at);
         CREATE INDEX IF NOT EXISTS idx_stock_movement_reversals_reversed_at ON stock_movement_reversals(reversed_at);
+        CREATE INDEX IF NOT EXISTS idx_combos_name ON combos(name);
+        CREATE INDEX IF NOT EXISTS idx_combo_items_combo ON combo_items(combo_id);
+        CREATE INDEX IF NOT EXISTS idx_combo_items_product ON combo_items(product_id);
         CREATE INDEX IF NOT EXISTS idx_ticket_prints_sale ON ticket_prints(sale_id);
         CREATE INDEX IF NOT EXISTS idx_ticket_prints_printed_at ON ticket_prints(printed_at);
     ",
@@ -1536,6 +1711,21 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         "No se pudo agregar columna active en users",
     )?;
 
+    ensure_column_exists(
+        conn,
+        "combos",
+        "active",
+        "INTEGER NOT NULL DEFAULT 1",
+        "No se pudo agregar columna active en combos",
+    )?;
+    ensure_column_exists(
+        conn,
+        "combos",
+        "updated_at",
+        "TEXT",
+        "No se pudo agregar columna updated_at en combos",
+    )?;
+
     conn.execute(
         "
         UPDATE users
@@ -1549,6 +1739,17 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|e| db_error("No se pudo normalizar columnas de users", e))?;
+
+    conn.execute(
+        "
+        UPDATE combos
+        SET
+            active = COALESCE(active, 1),
+            updated_at = COALESCE(NULLIF(TRIM(updated_at), ''), CURRENT_TIMESTAMP)
+    ",
+        [],
+    )
+    .map_err(|e| db_error("No se pudo normalizar columnas de combos", e))?;
 
     conn.execute(
         "
@@ -1934,6 +2135,662 @@ fn read_product_admin(conn: &Connection, product_id: i64) -> Result<ProductAdmin
     .optional()
     .map_err(|e| db_error("No se pudo consultar producto", e))?
     .ok_or_else(|| "Producto no encontrado".to_string())
+}
+
+fn normalize_combo_item_inputs(items: &[ComboItemInput]) -> Result<Vec<(i64, f64)>, String> {
+    if items.is_empty() {
+        return Err("Debes agregar productos al combo".to_string());
+    }
+
+    let mut aggregated: BTreeMap<i64, f64> = BTreeMap::new();
+    for item in items {
+        if item.product_id <= 0 {
+            return Err("Producto invalido en combo".to_string());
+        }
+        let quantity = round_integer(item.quantity);
+        if quantity <= 0.0 {
+            return Err("Las cantidades del combo deben ser mayores a cero".to_string());
+        }
+        let current = aggregated.get(&item.product_id).copied().unwrap_or(0.0);
+        aggregated.insert(item.product_id, round_integer(current + quantity));
+    }
+
+    let total_units = round_integer(aggregated.values().copied().sum::<f64>());
+    if total_units < 2.0 {
+        return Err("El combo debe incluir al menos 2 unidades en total".to_string());
+    }
+
+    Ok(aggregated.into_iter().collect())
+}
+
+fn read_combo_admin(conn: &Connection, combo_id: i64) -> Result<ComboAdminRow, String> {
+    let (
+        id,
+        name,
+        discount_percent,
+        active_raw,
+        created_at,
+        updated_at,
+    ): (i64, String, f64, i64, String, String) = conn
+        .query_row(
+            "
+            SELECT id, name, discount_percent, active, created_at, updated_at
+            FROM combos
+            WHERE id = ?
+            LIMIT 1
+        ",
+            params![combo_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| db_error("No se pudo consultar combo", e))?
+        .ok_or_else(|| "Combo no encontrado".to_string())?;
+
+    let mut items_stmt = conn
+        .prepare(
+            "
+            SELECT ci.id, ci.product_id, p.name, p.barcode, ci.quantity
+            FROM combo_items ci
+            JOIN products p ON p.id = ci.product_id
+            WHERE ci.combo_id = ?
+            ORDER BY ci.id ASC
+        ",
+        )
+        .map_err(|e| db_error("No se pudo preparar items del combo", e))?;
+    let item_rows = items_stmt
+        .query_map(params![combo_id], |row| {
+            Ok(ComboAdminItem {
+                id: row.get(0)?,
+                product_id: row.get(1)?,
+                product_name: row.get(2)?,
+                product_barcode: row.get(3)?,
+                quantity: round_integer(row.get::<_, f64>(4)?),
+            })
+        })
+        .map_err(|e| db_error("No se pudieron listar items del combo", e))?;
+
+    let mut items: Vec<ComboAdminItem> = Vec::new();
+    for row in item_rows {
+        items.push(row.map_err(|e| db_error("No se pudo mapear item del combo", e))?);
+    }
+
+    Ok(ComboAdminRow {
+        id,
+        name,
+        discount_percent: round_integer(discount_percent),
+        active: active_raw == 1,
+        items,
+        created_at,
+        updated_at,
+    })
+}
+
+fn list_combo_ids(conn: &Connection) -> Result<Vec<i64>, String> {
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT id
+            FROM combos
+            ORDER BY active DESC, name COLLATE NOCASE ASC, id DESC
+        ",
+        )
+        .map_err(|e| db_error("No se pudo preparar listado de combos", e))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, i64>(0))
+        .map_err(|e| db_error("No se pudieron listar combos", e))?;
+
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|e| db_error("No se pudo mapear id de combo", e))?);
+    }
+    Ok(ids)
+}
+
+fn load_active_combo_definitions(conn: &Connection) -> Result<Vec<ComboDefinition>, String> {
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT
+                c.id, c.name, c.discount_percent,
+                ci.product_id, ci.quantity, p.name
+            FROM combos c
+            JOIN combo_items ci ON ci.combo_id = c.id
+            JOIN products p ON p.id = ci.product_id
+            WHERE c.active = 1
+            ORDER BY c.id ASC, ci.id ASC
+        ",
+        )
+        .map_err(|e| db_error("No se pudo preparar combos activos", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                round_integer(row.get::<_, f64>(2)?),
+                row.get::<_, i64>(3)?,
+                round_integer(row.get::<_, f64>(4)?),
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|e| db_error("No se pudieron listar combos activos", e))?;
+
+    let mut combos: Vec<ComboDefinition> = Vec::new();
+    let mut combo_index_by_id: HashMap<i64, usize> = HashMap::new();
+
+    for row in rows {
+        let (combo_id, combo_name, discount_percent, product_id, quantity, product_name) =
+            row.map_err(|e| db_error("No se pudo mapear combo activo", e))?;
+        if quantity <= 0.0 || discount_percent <= 0.0 {
+            continue;
+        }
+        let idx = if let Some(existing_idx) = combo_index_by_id.get(&combo_id).copied() {
+            existing_idx
+        } else {
+            combos.push(ComboDefinition {
+                combo_id,
+                combo_name,
+                discount_percent,
+                items: Vec::new(),
+            });
+            let new_idx = combos.len() - 1;
+            combo_index_by_id.insert(combo_id, new_idx);
+            new_idx
+        };
+        combos[idx].items.push(ComboDefinitionItem {
+            product_id,
+            product_name,
+            quantity,
+        });
+    }
+
+    combos.retain(|combo| !combo.items.is_empty() && combo.discount_percent > 0.0);
+    combos.sort_by(|left, right| {
+        right
+            .discount_percent
+            .partial_cmp(&left.discount_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.combo_id.cmp(&right.combo_id))
+    });
+    Ok(combos)
+}
+
+fn combo_required_units(combo: &ComboDefinition) -> f64 {
+    round_non_negative_integer(combo.items.iter().map(|item| item.quantity).sum())
+}
+
+fn combo_possible_applications(combo: &ComboDefinition, available_qty: &HashMap<i64, f64>) -> i64 {
+    if combo.items.is_empty() {
+        return 0;
+    }
+    let mut max_applications = i64::MAX;
+    for item in &combo.items {
+        if item.quantity <= 0.0 {
+            return 0;
+        }
+        let available = round_non_negative_integer(
+            available_qty
+                .get(&item.product_id)
+                .copied()
+                .unwrap_or(0.0),
+        );
+        let possible = (available / item.quantity).floor() as i64;
+        max_applications = std::cmp::min(max_applications, possible);
+    }
+    if max_applications == i64::MAX {
+        0
+    } else {
+        max_applications.max(0)
+    }
+}
+
+fn combo_overlaps(left: &ComboDefinition, right: &ComboDefinition) -> bool {
+    let right_products: HashSet<i64> = right.items.iter().map(|item| item.product_id).collect();
+    left.items
+        .iter()
+        .any(|item| right_products.contains(&item.product_id))
+}
+
+fn combo_order_priority(left: &ComboChoiceOption, right: &ComboChoiceOption) -> std::cmp::Ordering {
+    right
+        .required_units
+        .partial_cmp(&left.required_units)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| {
+            right
+                .discount_percent
+                .partial_cmp(&left.discount_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .then_with(|| right.possible_applications.cmp(&left.possible_applications))
+        .then_with(|| left.combo_id.cmp(&right.combo_id))
+}
+
+fn build_combo_choice_groups(
+    combos: &[ComboDefinition],
+    available_qty: &HashMap<i64, f64>,
+    selected_combo_ids: &HashSet<i64>,
+) -> Vec<ComboChoiceGroup> {
+    #[derive(Clone)]
+    struct Candidate {
+        combo: ComboDefinition,
+        possible_applications: i64,
+        required_units: f64,
+    }
+
+    let candidates: Vec<Candidate> = combos
+        .iter()
+        .filter_map(|combo| {
+            let possible_applications = combo_possible_applications(combo, available_qty);
+            if possible_applications <= 0 {
+                return None;
+            }
+            Some(Candidate {
+                combo: combo.clone(),
+                possible_applications,
+                required_units: combo_required_units(combo),
+            })
+        })
+        .collect();
+
+    if candidates.len() <= 1 {
+        return Vec::new();
+    }
+
+    let mut visited = vec![false; candidates.len()];
+    let mut groups: Vec<ComboChoiceGroup> = Vec::new();
+
+    for start_idx in 0..candidates.len() {
+        if visited[start_idx] {
+            continue;
+        }
+        let mut stack = vec![start_idx];
+        let mut component_indices: Vec<usize> = Vec::new();
+
+        while let Some(current_idx) = stack.pop() {
+            if visited[current_idx] {
+                continue;
+            }
+            visited[current_idx] = true;
+            component_indices.push(current_idx);
+
+            for other_idx in 0..candidates.len() {
+                if visited[other_idx] || other_idx == current_idx {
+                    continue;
+                }
+                if combo_overlaps(&candidates[current_idx].combo, &candidates[other_idx].combo) {
+                    stack.push(other_idx);
+                }
+            }
+        }
+
+        if component_indices.len() <= 1 {
+            continue;
+        }
+
+        let mut options: Vec<ComboChoiceOption> = component_indices
+            .iter()
+            .map(|idx| {
+                let candidate = &candidates[*idx];
+                ComboChoiceOption {
+                    combo_id: candidate.combo.combo_id,
+                    combo_name: candidate.combo.combo_name.clone(),
+                    discount_percent: round_integer(candidate.combo.discount_percent),
+                    required_units: round_integer(candidate.required_units),
+                    possible_applications: candidate.possible_applications,
+                }
+            })
+            .collect();
+
+        options.sort_by(combo_order_priority);
+        let suggested_combo_id = options.first().map(|opt| opt.combo_id).unwrap_or(0);
+        if suggested_combo_id <= 0 {
+            continue;
+        }
+
+        let selected_combo_id = options
+            .iter()
+            .find(|option| selected_combo_ids.contains(&option.combo_id))
+            .map(|option| option.combo_id);
+
+        let signature = options
+            .iter()
+            .map(|option| option.combo_id.to_string())
+            .collect::<Vec<String>>()
+            .join("-");
+
+        groups.push(ComboChoiceGroup {
+            signature,
+            suggested_combo_id,
+            selected_combo_id,
+            options,
+        });
+    }
+
+    groups.sort_by(|left, right| left.signature.cmp(&right.signature));
+    groups
+}
+
+fn distribute_discount_by_weight(
+    parts: &[(i64, f64)],
+    target_discount: f64,
+) -> HashMap<i64, f64> {
+    let target = round_non_negative_integer(target_discount) as i64;
+    if target <= 0 {
+        return HashMap::new();
+    }
+    let total_weight = round_non_negative_integer(parts.iter().map(|(_, value)| *value).sum());
+    if total_weight <= 0.0 {
+        return HashMap::new();
+    }
+
+    #[derive(Debug)]
+    struct Share {
+        product_id: i64,
+        amount: i64,
+        remainder: f64,
+        max_amount: i64,
+    }
+
+    let mut shares: Vec<Share> = Vec::new();
+    let mut assigned_sum: i64 = 0;
+    for (product_id, weight_raw) in parts {
+        let weight = round_non_negative_integer(*weight_raw);
+        let max_amount = weight as i64;
+        if max_amount <= 0 {
+            continue;
+        }
+        let raw_share = (target as f64) * (weight / total_weight);
+        let mut amount = raw_share.floor() as i64;
+        if amount > max_amount {
+            amount = max_amount;
+        }
+        assigned_sum += amount;
+        shares.push(Share {
+            product_id: *product_id,
+            amount,
+            remainder: raw_share - amount as f64,
+            max_amount,
+        });
+    }
+
+    if shares.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut missing = target - assigned_sum;
+    if missing > 0 {
+        shares.sort_by(|left, right| {
+            right
+                .remainder
+                .partial_cmp(&left.remainder)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| (right.max_amount - right.amount).cmp(&(left.max_amount - left.amount)))
+                .then_with(|| left.product_id.cmp(&right.product_id))
+        });
+        'outer: while missing > 0 {
+            let mut progressed = false;
+            for share in &mut shares {
+                if share.amount < share.max_amount {
+                    share.amount += 1;
+                    missing -= 1;
+                    progressed = true;
+                    if missing <= 0 {
+                        break 'outer;
+                    }
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+    }
+
+    let mut result = HashMap::new();
+    for share in shares {
+        if share.amount > 0 {
+            result.insert(share.product_id, share.amount as f64);
+        }
+    }
+    result
+}
+
+fn resolve_sale_lines(
+    conn: &Connection,
+    items: &[SaleItemInput],
+    is_internal_consumption: bool,
+    enforce_stock: bool,
+) -> Result<Vec<SaleResolvedLine>, String> {
+    if items.is_empty() {
+        return Err("No hay productos en el carrito".to_string());
+    }
+
+    let mut requested: BTreeMap<i64, f64> = BTreeMap::new();
+    for item in items {
+        if item.product_id <= 0 {
+            return Err("Producto invalido en carrito".to_string());
+        }
+        let quantity = round_integer(item.quantity);
+        if quantity <= 0.0 {
+            return Err("Las cantidades deben ser mayores a cero".to_string());
+        }
+        let current = requested.get(&item.product_id).copied().unwrap_or(0.0);
+        requested.insert(item.product_id, round_integer(current + quantity));
+    }
+
+    let mut lines: Vec<SaleResolvedLine> = Vec::new();
+    for (product_id, quantity) in requested {
+        let (name, stock_before, cost_at_sale, listed_unit_price): (String, f64, f64, f64) = conn
+            .query_row(
+                "
+                SELECT name, stock, cost, sale_price
+                FROM products
+                WHERE id = ? AND active = 1
+                LIMIT 1
+            ",
+                params![product_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        round_integer(row.get::<_, f64>(1)?),
+                        round_integer(row.get::<_, f64>(2)?),
+                        round_integer(row.get::<_, f64>(3)?),
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| db_error("No se pudo leer producto para venta", e))?
+            .ok_or_else(|| "Producto no encontrado o inactivo".to_string())?;
+
+        let stock_after = round_integer(stock_before - quantity);
+        if enforce_stock && stock_after < 0.0 {
+            return Err(format!("Stock insuficiente para {name}"));
+        }
+        let base_unit_price = if is_internal_consumption {
+            cost_at_sale
+        } else {
+            listed_unit_price
+        };
+        let base_subtotal = round_integer(base_unit_price * quantity);
+        lines.push(SaleResolvedLine {
+            product_id,
+            product_name: name,
+            quantity,
+            stock_before,
+            stock_after,
+            cost_at_sale,
+            base_unit_price,
+            base_subtotal,
+        });
+    }
+
+    Ok(lines)
+}
+
+fn compute_combo_discount_outcome(
+    conn: &Connection,
+    lines: &[SaleResolvedLine],
+    enable_combos: bool,
+    selected_combo_ids: Option<&HashSet<i64>>,
+) -> Result<ComboDiscountOutcome, String> {
+    let subtotal_before_discount =
+        round_integer(lines.iter().map(|line| line.base_subtotal).sum::<f64>());
+    if !enable_combos || lines.is_empty() {
+        return Ok(ComboDiscountOutcome {
+            subtotal_before_discount,
+            combo_discount_total: 0.0,
+            total_after_discount: subtotal_before_discount,
+            discount_by_product: HashMap::new(),
+            matches: Vec::new(),
+            ambiguous_groups: Vec::new(),
+        });
+    }
+
+    let combos = load_active_combo_definitions(conn)?;
+    if combos.is_empty() {
+        return Ok(ComboDiscountOutcome {
+            subtotal_before_discount,
+            combo_discount_total: 0.0,
+            total_after_discount: subtotal_before_discount,
+            discount_by_product: HashMap::new(),
+            matches: Vec::new(),
+            ambiguous_groups: Vec::new(),
+        });
+    }
+
+    let selected_ids = selected_combo_ids.cloned().unwrap_or_default();
+    let line_by_product: HashMap<i64, &SaleResolvedLine> =
+        lines.iter().map(|line| (line.product_id, line)).collect();
+    let mut available_qty: HashMap<i64, f64> = lines
+        .iter()
+        .map(|line| (line.product_id, round_non_negative_integer(line.quantity)))
+        .collect();
+    let ambiguous_groups = build_combo_choice_groups(&combos, &available_qty, &selected_ids);
+
+    let mut combos_sorted = combos;
+    combos_sorted.sort_by(|left, right| {
+        let left_selected = if selected_ids.contains(&left.combo_id) { 0 } else { 1 };
+        let right_selected = if selected_ids.contains(&right.combo_id) { 0 } else { 1 };
+        left_selected
+            .cmp(&right_selected)
+            .then_with(|| {
+                combo_required_units(right)
+                    .partial_cmp(&combo_required_units(left))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                right
+                    .discount_percent
+                    .partial_cmp(&left.discount_percent)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| left.combo_id.cmp(&right.combo_id))
+    });
+
+    let mut discount_by_product: HashMap<i64, f64> = HashMap::new();
+    let mut matches: Vec<ComboMatch> = Vec::new();
+
+    for combo in combos_sorted {
+        if combo.discount_percent <= 0.0 {
+            continue;
+        }
+
+        let max_applications = combo_possible_applications(&combo, &available_qty);
+        if max_applications <= 0 {
+            continue;
+        }
+
+        let applications = max_applications;
+        let mut combo_parts: Vec<(i64, f64)> = Vec::new();
+        let mut combo_products: Vec<ComboMatchProduct> = Vec::new();
+        let mut combo_subtotal = 0.0;
+        for item in &combo.items {
+            let Some(line) = line_by_product.get(&item.product_id).copied() else {
+                combo_subtotal = 0.0;
+                break;
+            };
+            let quantity_in_combo = round_integer(item.quantity * applications as f64);
+            if quantity_in_combo <= 0.0 {
+                combo_subtotal = 0.0;
+                break;
+            }
+            let part_subtotal = round_integer(line.base_unit_price * quantity_in_combo);
+            combo_subtotal = round_integer(combo_subtotal + part_subtotal);
+            combo_parts.push((item.product_id, part_subtotal));
+            combo_products.push(ComboMatchProduct {
+                product_id: item.product_id,
+                product_name: item.product_name.clone(),
+                quantity: quantity_in_combo,
+            });
+        }
+        if combo_subtotal <= 0.0 {
+            continue;
+        }
+
+        let raw_discount = round_integer(combo_subtotal * (combo.discount_percent / 100.0));
+        if raw_discount <= 0.0 {
+            continue;
+        }
+        let distributed = distribute_discount_by_weight(&combo_parts, raw_discount);
+        let distributed_total = round_integer(distributed.values().copied().sum::<f64>());
+        if distributed_total <= 0.0 {
+            continue;
+        }
+
+        for (product_id, amount) in distributed {
+            let current = discount_by_product.get(&product_id).copied().unwrap_or(0.0);
+            discount_by_product.insert(product_id, round_integer(current + amount));
+        }
+
+        for item in &combo.items {
+            let used = round_integer(item.quantity * applications as f64);
+            let current = round_non_negative_integer(
+                available_qty.get(&item.product_id).copied().unwrap_or(0.0),
+            );
+            available_qty.insert(item.product_id, round_non_negative_integer(current - used));
+        }
+
+        matches.push(ComboMatch {
+            combo_id: combo.combo_id,
+            combo_name: combo.combo_name,
+            applications,
+            discount_percent: combo.discount_percent,
+            discount_amount: distributed_total,
+            products: combo_products,
+        });
+    }
+
+    let mut combo_discount_total = 0.0;
+    for line in lines {
+        let current_discount = round_non_negative_integer(
+            discount_by_product
+                .get(&line.product_id)
+                .copied()
+                .unwrap_or(0.0),
+        );
+        let capped = current_discount.min(line.base_subtotal);
+        discount_by_product.insert(line.product_id, capped);
+        combo_discount_total = round_integer(combo_discount_total + capped);
+    }
+    let total_after_discount = round_integer((subtotal_before_discount - combo_discount_total).max(0.0));
+
+    Ok(ComboDiscountOutcome {
+        subtotal_before_discount,
+        combo_discount_total,
+        total_after_discount,
+        discount_by_product,
+        matches,
+        ambiguous_groups,
+    })
 }
 
 fn get_rounding_base(conn: &Connection) -> i64 {
@@ -3780,6 +4637,163 @@ fn restore_deleted_category(
 }
 
 #[tauri::command]
+fn list_combos_admin(app: AppHandle) -> Result<Vec<ComboAdminRow>, String> {
+    let conn = open_db(&app)?;
+    let _admin = require_admin_user(&conn)?;
+
+    let combo_ids = list_combo_ids(&conn)?;
+    let mut result = Vec::new();
+    for combo_id in combo_ids {
+        result.push(read_combo_admin(&conn, combo_id)?);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn create_combo(app: AppHandle, payload: CreateComboRequest) -> Result<ComboAdminRow, String> {
+    let mut conn = open_db(&app)?;
+    let _admin = require_admin_user(&conn)?;
+
+    let clean_name = payload.name.trim().to_string();
+    if clean_name.is_empty() {
+        return Err("El nombre del combo es obligatorio".to_string());
+    }
+    let discount_percent = round_integer(payload.discount_percent);
+    if discount_percent <= 0.0 || discount_percent > 100.0 {
+        return Err("El descuento del combo debe estar entre 1 y 100".to_string());
+    }
+    let normalized_items = normalize_combo_item_inputs(&payload.items)?;
+
+    let tx = conn
+        .transaction()
+        .map_err(|e| db_error("No se pudo iniciar transaccion de combo", e))?;
+
+    tx.execute(
+        "
+        INSERT INTO combos(name, discount_percent, active, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ",
+        params![
+            clean_name,
+            discount_percent,
+            if payload.active { 1_i64 } else { 0_i64 }
+        ],
+    )
+    .map_err(|e| db_error("No se pudo crear combo (nombre duplicado o datos invalidos)", e))?;
+    let combo_id = tx.last_insert_rowid();
+
+    for (product_id, quantity) in normalized_items {
+        let exists: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM products WHERE id = ? AND active = 1 LIMIT 1",
+                params![product_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| db_error("No se pudo validar producto de combo", e))?;
+        if exists.is_none() {
+            return Err("Uno de los productos del combo no existe o esta inactivo".to_string());
+        }
+
+        tx.execute(
+            "INSERT INTO combo_items(combo_id, product_id, quantity) VALUES (?, ?, ?)",
+            params![combo_id, product_id, quantity],
+        )
+        .map_err(|e| db_error("No se pudo guardar item de combo", e))?;
+    }
+
+    tx.commit()
+        .map_err(|e| db_error("No se pudo confirmar creacion de combo", e))?;
+    read_combo_admin(&conn, combo_id)
+}
+
+#[tauri::command]
+fn update_combo(app: AppHandle, payload: UpdateComboRequest) -> Result<ComboAdminRow, String> {
+    if payload.id <= 0 {
+        return Err("Combo invalido".to_string());
+    }
+
+    let mut conn = open_db(&app)?;
+    let _admin = require_admin_user(&conn)?;
+
+    let clean_name = payload.name.trim().to_string();
+    if clean_name.is_empty() {
+        return Err("El nombre del combo es obligatorio".to_string());
+    }
+    let discount_percent = round_integer(payload.discount_percent);
+    if discount_percent <= 0.0 || discount_percent > 100.0 {
+        return Err("El descuento del combo debe estar entre 1 y 100".to_string());
+    }
+    let normalized_items = normalize_combo_item_inputs(&payload.items)?;
+
+    let tx = conn
+        .transaction()
+        .map_err(|e| db_error("No se pudo iniciar transaccion de combo", e))?;
+
+    let affected = tx
+        .execute(
+            "
+            UPDATE combos
+            SET name = ?, discount_percent = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ",
+            params![
+                clean_name,
+                discount_percent,
+                if payload.active { 1_i64 } else { 0_i64 },
+                payload.id
+            ],
+        )
+        .map_err(|e| db_error("No se pudo actualizar combo", e))?;
+    if affected == 0 {
+        return Err("Combo no encontrado".to_string());
+    }
+
+    tx.execute("DELETE FROM combo_items WHERE combo_id = ?", params![payload.id])
+        .map_err(|e| db_error("No se pudieron limpiar items de combo", e))?;
+
+    for (product_id, quantity) in normalized_items {
+        let exists: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM products WHERE id = ? AND active = 1 LIMIT 1",
+                params![product_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| db_error("No se pudo validar producto de combo", e))?;
+        if exists.is_none() {
+            return Err("Uno de los productos del combo no existe o esta inactivo".to_string());
+        }
+
+        tx.execute(
+            "INSERT INTO combo_items(combo_id, product_id, quantity) VALUES (?, ?, ?)",
+            params![payload.id, product_id, quantity],
+        )
+        .map_err(|e| db_error("No se pudo guardar item de combo", e))?;
+    }
+
+    tx.commit()
+        .map_err(|e| db_error("No se pudo confirmar actualizacion de combo", e))?;
+    read_combo_admin(&conn, payload.id)
+}
+
+#[tauri::command]
+fn delete_combo(app: AppHandle, combo_id: i64) -> Result<ComboDeleteResponse, String> {
+    if combo_id <= 0 {
+        return Err("Combo invalido".to_string());
+    }
+    let conn = open_db(&app)?;
+    let _admin = require_admin_user(&conn)?;
+    let affected = conn
+        .execute("DELETE FROM combos WHERE id = ?", params![combo_id])
+        .map_err(|e| db_error("No se pudo eliminar combo", e))?;
+    if affected == 0 {
+        return Err("Combo no encontrado".to_string());
+    }
+    Ok(ComboDeleteResponse { id: combo_id })
+}
+
+#[tauri::command]
 fn list_products_admin(
     app: AppHandle,
     search: Option<String>,
@@ -5443,6 +6457,47 @@ fn sales_report(
 }
 
 #[tauri::command]
+fn preview_sale_combos(
+    app: AppHandle,
+    payload: PreviewSaleCombosRequest,
+) -> Result<ComboPreviewResponse, String> {
+    let conn = open_db(&app)?;
+    let _session = require_authenticated_user(&conn)?;
+
+    if payload.items.is_empty() {
+        return Ok(ComboPreviewResponse {
+            subtotal_before_discount: 0.0,
+            combo_discount_total: 0.0,
+            total_after_discount: 0.0,
+            matches: Vec::new(),
+            ambiguous_groups: Vec::new(),
+        });
+    }
+
+    let selected_combo_ids: HashSet<i64> = payload
+        .selected_combo_ids
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|combo_id| *combo_id > 0)
+        .collect();
+    let lines = resolve_sale_lines(&conn, &payload.items, false, false)?;
+    let outcome = compute_combo_discount_outcome(
+        &conn,
+        &lines,
+        true,
+        Some(&selected_combo_ids),
+    )?;
+    Ok(ComboPreviewResponse {
+        subtotal_before_discount: outcome.subtotal_before_discount,
+        combo_discount_total: outcome.combo_discount_total,
+        total_after_discount: outcome.total_after_discount,
+        matches: outcome.matches,
+        ambiguous_groups: outcome.ambiguous_groups,
+    })
+}
+
+#[tauri::command]
 fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleResponse, String> {
     if payload.items.is_empty() {
         return Err("No hay productos en el carrito".to_string());
@@ -5508,52 +6563,47 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
     .map_err(|e| db_error("No se pudo abrir venta", e))?;
     let sale_id = tx.last_insert_rowid();
 
+    let selected_combo_ids: HashSet<i64> = payload
+        .selected_combo_ids
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|combo_id| *combo_id > 0)
+        .collect();
+    let apply_combo_discount = if is_internal_consumption {
+        false
+    } else {
+        payload.apply_combo_discount.unwrap_or(true)
+    };
+    let lines = resolve_sale_lines(&tx, &payload.items, is_internal_consumption, true)?;
+    let combo_outcome = compute_combo_discount_outcome(
+        &tx,
+        &lines,
+        apply_combo_discount,
+        Some(&selected_combo_ids),
+    )?;
+
     let mut total: f64 = 0.0;
-    for item in &payload.items {
-        let quantity = round_integer(item.quantity);
-        if quantity <= 0.0 {
-            return Err("Las cantidades deben ser mayores a cero".to_string());
-        }
-
-        let product = tx
-            .query_row(
-                "
-                SELECT id, name, stock, cost, sale_price
-                FROM products
-                WHERE id = ? AND active = 1
-            ",
-                params![item.product_id],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        round_integer(row.get::<_, f64>(2)?),
-                        round_integer(row.get::<_, f64>(3)?),
-                        round_integer(row.get::<_, f64>(4)?),
-                    ))
-                },
-            )
-            .optional()
-            .map_err(|e| db_error("No se pudo leer producto para venta", e))?
-            .ok_or_else(|| "Producto no encontrado o inactivo".to_string())?;
-
-        let (product_id, product_name, stock_before, cost_at_sale, listed_unit_price) = product;
-        let stock_after = round_integer(stock_before - quantity);
-        if stock_after < 0.0 {
-            return Err(format!("Stock insuficiente para {product_name}"));
-        }
-
-        let unit_price = if is_internal_consumption {
-            cost_at_sale
+    for line in &lines {
+        let line_discount = round_non_negative_integer(
+            combo_outcome
+                .discount_by_product
+                .get(&line.product_id)
+                .copied()
+                .unwrap_or(0.0),
+        )
+        .min(line.base_subtotal);
+        let subtotal = round_integer((line.base_subtotal - line_discount).max(0.0));
+        let unit_price = if line.quantity > 0.0 {
+            subtotal / line.quantity
         } else {
-            listed_unit_price
+            0.0
         };
-        let subtotal = round_integer(unit_price * quantity);
         total = round_integer(total + subtotal);
 
         tx.execute(
             "UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            params![stock_after, product_id],
+            params![line.stock_after, line.product_id],
         )
         .map_err(|e| db_error("No se pudo descontar stock por venta", e))?;
 
@@ -5566,12 +6616,12 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
         ",
             params![
                 sale_id,
-                product_id,
-                product_name,
-                quantity,
+                line.product_id,
+                line.product_name,
+                line.quantity,
                 unit_price,
                 subtotal,
-                cost_at_sale
+                line.cost_at_sale
             ],
         )
         .map_err(|e| db_error("No se pudo registrar item de venta", e))?;
@@ -5584,16 +6634,16 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ",
             params![
-                product_id,
+                line.product_id,
                 if is_internal_consumption {
                     "manual_out"
                 } else {
                     "sale"
                 },
-                -quantity,
-                stock_before,
-                stock_after,
-                cost_at_sale,
+                -line.quantity,
+                line.stock_before,
+                line.stock_after,
+                line.cost_at_sale,
                 if is_internal_consumption {
                     "internal_consumption"
                 } else {
@@ -5715,6 +6765,9 @@ fn create_sale(app: AppHandle, payload: CreateSaleRequest) -> Result<CreateSaleR
         sale_id,
         sold_at,
         total,
+        subtotal_before_discount: combo_outcome.subtotal_before_discount,
+        combo_discount_total: combo_outcome.combo_discount_total,
+        combo_matches: combo_outcome.matches,
         payment_method: sale_method,
         sale_type,
         customer_id,
@@ -6308,6 +7361,10 @@ fn main() {
             delete_category,
             list_deleted_categories,
             restore_deleted_category,
+            list_combos_admin,
+            create_combo,
+            update_combo,
+            delete_combo,
             list_products_admin,
             create_product,
             update_product,
@@ -6320,6 +7377,7 @@ fn main() {
             dashboard_snapshot,
             dashboard_executive,
             sales_report,
+            preview_sale_combos,
             create_sale,
             reverse_sale,
             ticket_settings,

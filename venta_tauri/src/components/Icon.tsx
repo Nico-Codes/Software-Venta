@@ -7,6 +7,7 @@ export type IconName =
   | "dashboard"
   | "products"
   | "categories"
+  | "combos"
   | "inventory"
   | "reports"
   | "customers"
@@ -79,6 +80,12 @@ export function Icon({ name, size = 18, strokeWidth = 1.9, className }: IconProp
         <>
           <path {...strokeCommon} strokeWidth={strokeWidth} d="M6 4h12l2 4-8 12L4 8z" />
           <circle {...strokeCommon} strokeWidth={strokeWidth} cx="10" cy="8" r="1" />
+        </>
+      )}
+      {name === "combos" && (
+        <>
+          <path {...strokeCommon} strokeWidth={strokeWidth} d="M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+          <path {...strokeCommon} strokeWidth={strokeWidth} d="M9 10h6M12 7v6" />
         </>
       )}
       {name === "inventory" && (

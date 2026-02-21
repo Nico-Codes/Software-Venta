@@ -4,6 +4,7 @@ export type UtilitySection =
   | "dashboard"
   | "products"
   | "categories"
+  | "combos"
   | "inventory"
   | "reports"
   | "customers"
@@ -266,6 +267,86 @@ export type RestoreDeletedCategoryResponse = {
   category: CategoryAdminSummary;
 };
 
+export type ComboItemInput = {
+  productId: number;
+  quantity: number;
+};
+
+export type ComboAdminItem = {
+  id: number;
+  productId: number;
+  productName: string;
+  productBarcode: string | null;
+  quantity: number;
+};
+
+export type ComboAdminRow = {
+  id: number;
+  name: string;
+  discountPercent: number;
+  active: boolean;
+  items: ComboAdminItem[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateComboRequest = {
+  name: string;
+  discountPercent: number;
+  active: boolean;
+  items: ComboItemInput[];
+};
+
+export type UpdateComboRequest = {
+  id: number;
+  name: string;
+  discountPercent: number;
+  active: boolean;
+  items: ComboItemInput[];
+};
+
+export type ComboDeleteResponse = {
+  id: number;
+};
+
+export type ComboMatchProduct = {
+  productId: number;
+  productName: string;
+  quantity: number;
+};
+
+export type ComboMatch = {
+  comboId: number;
+  comboName: string;
+  applications: number;
+  discountPercent: number;
+  discountAmount: number;
+  products: ComboMatchProduct[];
+};
+
+export type ComboChoiceOption = {
+  comboId: number;
+  comboName: string;
+  discountPercent: number;
+  requiredUnits: number;
+  possibleApplications: number;
+};
+
+export type ComboChoiceGroup = {
+  signature: string;
+  suggestedComboId: number;
+  selectedComboId?: number;
+  options: ComboChoiceOption[];
+};
+
+export type ComboPreviewResponse = {
+  subtotalBeforeDiscount: number;
+  comboDiscountTotal: number;
+  totalAfterDiscount: number;
+  matches: ComboMatch[];
+  ambiguousGroups: ComboChoiceGroup[];
+};
+
 export type ProductAdminRow = {
   id: number;
   name: string;
@@ -363,12 +444,17 @@ export type CreateSaleRequest = {
   paidAmount?: number;
   initialPaymentMethod?: PaymentMethod;
   dueDate?: string;
+  selectedComboIds?: number[];
+  applyComboDiscount?: boolean;
 };
 
 export type CreateSaleResponse = {
   saleId: number;
   soldAt: string;
   total: number;
+  subtotalBeforeDiscount: number;
+  comboDiscountTotal: number;
+  comboMatches: ComboMatch[];
   paymentMethod: PaymentMethod;
   saleType: "cash" | "credit" | "internal";
   customerId?: number;

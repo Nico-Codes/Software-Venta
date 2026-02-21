@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+﻿import { invoke } from "@tauri-apps/api/core";
 import { getVersion as tauriGetVersion } from "@tauri-apps/api/app";
 import {
   AuthBootstrapCreateRequest,
@@ -13,7 +13,11 @@ import {
   DeletedCategoryArchiveRow,
   CategoryDeleteResponse,
   CategorySummary,
+  ComboAdminRow,
+  ComboDeleteResponse,
+  ComboPreviewResponse,
   CreateBackupResponse,
+  CreateComboRequest,
   CreateCustomerRequest,
   CreateCategoryRequest,
   DashboardExecutiveResponse,
@@ -42,12 +46,14 @@ import {
   RestoreBackupResponse,
   RegisterInventoryMovementRequest,
   RegisterInventoryMovementResponse,
+  SaleItemInput,
   SalesReportResponse,
   SaleTicketResponse,
   SetFavoriteProductResponse,
   TicketPrintRow,
   TicketSettingsResponse,
   UpdateBackupConfigRequest,
+  UpdateComboRequest,
   UpdateCustomerRequest,
   UpdateTicketSettingsRequest,
   RegisterCustomerPaymentRequest,
@@ -64,7 +70,7 @@ function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-export const APP_FALLBACK_VERSION = "1.0.11";
+export const APP_FALLBACK_VERSION = "1.0.14";
 
 function stringifyInvokeError(error: unknown): string {
   if (typeof error === "string") {
@@ -268,6 +274,22 @@ export function restoreDeletedCategory(archiveId: number): Promise<RestoreDelete
   });
 }
 
+export function listCombosAdmin(): Promise<ComboAdminRow[]> {
+  return invokeStrict<ComboAdminRow[]>("list_combos_admin");
+}
+
+export function createCombo(payload: CreateComboRequest): Promise<ComboAdminRow> {
+  return invokeStrict<ComboAdminRow>("create_combo", { payload });
+}
+
+export function updateCombo(payload: UpdateComboRequest): Promise<ComboAdminRow> {
+  return invokeStrict<ComboAdminRow>("update_combo", { payload });
+}
+
+export function deleteCombo(comboId: number): Promise<ComboDeleteResponse> {
+  return invokeStrict<ComboDeleteResponse>("delete_combo", { comboId });
+}
+
 export function listProductsAdmin(
   search?: string,
   categoryId?: number,
@@ -326,6 +348,18 @@ export function quickStockLookupByBarcode(barcode: string): Promise<QuickStockLo
 
 export function quickStockAddByBarcode(payload: QuickStockAddRequest): Promise<QuickStockAddResponse> {
   return invokeStrict<QuickStockAddResponse>("quick_stock_add_by_barcode", { payload });
+}
+
+export function previewSaleCombos(
+  items: SaleItemInput[],
+  selectedComboIds?: number[],
+): Promise<ComboPreviewResponse> {
+  return invokeStrict<ComboPreviewResponse>("preview_sale_combos", {
+    payload: {
+      items,
+      selectedComboIds,
+    },
+  });
 }
 
 export function createSale(payload: CreateSaleRequest): Promise<CreateSaleResponse> {

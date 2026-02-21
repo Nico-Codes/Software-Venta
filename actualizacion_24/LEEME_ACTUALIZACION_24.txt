@@ -1,0 +1,21 @@
+﻿ACTUALIZACION 24 - BUEN TRAGO v1.0.14
+
+Mejoras incluidas:
+- Venta rapida: ahora detecta combo y muestra popup centrado para confirmar si se aplica descuento.
+- Venta rapida: en conflictos de combo, permite elegir desde popup que combo quiere el cliente.
+- Motor de combos: prioridad por combo con mayor cantidad de unidades y soporte de seleccion manual.
+
+Contenido:
+- installador_windows/BUEN TRAGO_1.0.14_x64-setup.exe
+- installador_windows/BUEN TRAGO_1.0.14_x64_en-US.msi
+- scripts/ACTUALIZAR_WINDOWS.txt
+
+Instalacion recomendada:
+1) Cerrar BUEN TRAGO.
+2) Ejecutar el setup .exe como administrador.
+3) Si aparece "Already Installed", elegir "Uninstall before installing".
+4) Finalizar instalacion y abrir BUEN TRAGO.
+5) Verificar en interfaz que figura version 1.0.14.
+
+Nota:
+- La base de datos local del usuario no se borra al actualizar.

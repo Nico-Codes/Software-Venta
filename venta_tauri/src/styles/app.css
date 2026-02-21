@@ -500,6 +500,119 @@ body {
   justify-content: flex-end;
 }
 
+.combo-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(10, 27, 46, 0.46);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.combo-popup {
+  width: min(620px, 100%);
+  border: 1px solid #d2e5f8;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 20px 46px rgba(20, 39, 68, 0.3);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  animation: criticalPopIn 220ms ease;
+}
+
+.combo-popup-header {
+  display: grid;
+  gap: 4px;
+}
+
+.combo-popup-header h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.combo-popup-header p {
+  margin: 0;
+  color: #234f7d;
+  font-size: 14px;
+}
+
+.combo-popup-header small {
+  color: #3b628a;
+  font-size: 13px;
+}
+
+.combo-popup-groups {
+  display: grid;
+  gap: 8px;
+}
+
+.combo-popup-groups p {
+  margin: 0;
+  color: #46668a;
+  font-size: 13px;
+}
+
+.combo-popup-group {
+  border: 1px solid #d7e9fa;
+  border-radius: 12px;
+  background: #f5faff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.combo-popup-group strong {
+  font-size: 13px;
+  color: #1e4f81;
+}
+
+.combo-popup-options {
+  display: grid;
+  gap: 6px;
+}
+
+.combo-popup-option {
+  border: 1px solid #bdd6f1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #143e69;
+  padding: 9px 10px;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.combo-popup-option span {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.combo-popup-option small {
+  color: #4e6e90;
+  font-size: 12px;
+}
+
+.combo-popup-option em {
+  font-style: normal;
+  color: #1e6c4d;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.combo-popup-option.active {
+  border-color: #1f69cc;
+  background: #e9f3ff;
+  color: #114a81;
+}
+
+.combo-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 @keyframes criticalFadeIn {
   from {
     opacity: 0;
@@ -876,6 +989,27 @@ tbody tr:hover {
   display: block;
   margin-top: 6px;
   font-size: 30px;
+}
+
+.combo-summary-card {
+  border: 1px solid #d8e8fb;
+  background: #f4f9ff;
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 2px;
+}
+
+.combo-summary-card small {
+  color: #24527e;
+  font-size: 12px;
+}
+
+.combo-summary-card p {
+  margin: 4px 0 0;
+  color: #3a5f87;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .customer-debt {
@@ -1636,6 +1770,98 @@ tbody tr:hover {
 
 .categories-editor-actions {
   margin-top: 2px;
+  display: flex;
+  gap: 8px;
+}
+
+.combos-grid {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.combos-list-panel {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 0;
+}
+
+.combos-actions-row {
+  display: flex;
+  gap: 8px;
+}
+
+.combos-list {
+  border: 1px solid #dceaf8;
+  border-radius: 12px;
+  padding: 8px;
+  display: grid;
+  gap: 7px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.combo-row {
+  border: 1px solid #d7e8fa;
+  border-radius: 11px;
+  background: #f8fbff;
+  color: var(--ink-0);
+  padding: 9px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.combo-row.active {
+  border-color: #90bff1;
+  background: #ecf5ff;
+}
+
+.combos-editor-panel {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.combos-form {
+  display: grid;
+  gap: 8px;
+}
+
+.combos-active-switch {
+  align-self: end;
+}
+
+.combos-add-item {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.combos-scan-field,
+.combos-search-field {
+  grid-column: span 2;
+}
+
+.combos-add-item > button {
+  min-height: 40px;
+}
+
+.combos-search-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.combos-table-shell input {
+  min-width: 84px;
+}
+
+.combos-editor-actions {
   display: flex;
   gap: 8px;
 }
@@ -2403,7 +2629,8 @@ tbody tr:hover {
   }
 
   .products-grid,
-  .categories-grid {
+  .categories-grid,
+  .combos-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2465,6 +2692,10 @@ tbody tr:hover {
 
   .catalog-list,
   .split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .combos-add-item {
     grid-template-columns: 1fr;
   }
 

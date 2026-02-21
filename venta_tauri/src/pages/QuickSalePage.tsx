@@ -1,5 +1,6 @@
 ﻿import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ComboDecisionPopup } from "../components/ComboDecisionPopup";
 import { CriticalAlertPopup } from "../components/CriticalAlertPopup";
 import { Icon } from "../components/Icon";
 import {
@@ -9,12 +10,15 @@ import {
   listCustomers,
   listFavoriteProducts,
   listPaymentMethods,
+  previewSaleCombos,
   reverseSale,
   searchProducts,
   setProductFavorite,
 } from "../tauri";
 import {
+  ComboChoiceGroup,
   CustomerSummary,
+  ComboPreviewResponse,
   FavoriteProductRow,
   PaymentMethod,
   ProductSummary,
@@ -41,6 +45,20 @@ type Notice = {
   text: string;
 };
 
+type ComboDecisionGroupState = {
+  signature: string;
+  suggestedComboId: number;
+  selectedComboId: number;
+  options: ComboChoiceGroup["options"];
+};
+
+type ComboDecisionState = {
+  signature: string;
+  comboNames: string;
+  discountAmount: number;
+  groups: ComboDecisionGroupState[];
+};
+
 const FALLBACK_METHODS: PaymentMethod[] = [
   "Efectivo",
   "Credito",
@@ -49,6 +67,14 @@ const FALLBACK_METHODS: PaymentMethod[] = [
   "Deuda",
   "Consumo interno",
 ];
+
+const EMPTY_COMBO_PREVIEW: ComboPreviewResponse = {
+  subtotalBeforeDiscount: 0,
+  comboDiscountTotal: 0,
+  totalAfterDiscount: 0,
+  matches: [],
+  ambiguousGroups: [],
+};
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -167,11 +193,32 @@ export function QuickSalePage() {
   const [revertingSale, setRevertingSale] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [criticalNotice, setCriticalNotice] = useState<Notice | null>(null);
+  const [comboPreview, setComboPreview] = useState<ComboPreviewResponse>(EMPTY_COMBO_PREVIEW);
+  const [comboDiscountEnabled, setComboDiscountEnabled] = useState(false);
+  const [selectedComboIds, setSelectedComboIds] = useState<number[]>([]);
+  const [comboDecision, setComboDecision] = useState<ComboDecisionState | null>(null);
+  const comboDecisionSignatureRef = useRef("");
 
-  const total = useMemo(
+  const subtotal = useMemo(
     () => roundInteger(cart.reduce((acc, item) => acc + item.qty * item.salePrice, 0)),
     [cart],
   );
+
+  const total = useMemo(() => {
+    if (paymentMethod === "Consumo interno") {
+      return subtotal;
+    }
+    if (subtotal <= 0) {
+      return 0;
+    }
+    if (!comboDiscountEnabled) {
+      return subtotal;
+    }
+    if (roundInteger(comboPreview.subtotalBeforeDiscount) !== roundInteger(subtotal)) {
+      return subtotal;
+    }
+    return roundInteger(comboPreview.totalAfterDiscount);
+  }, [comboDiscountEnabled, comboPreview.subtotalBeforeDiscount, comboPreview.totalAfterDiscount, paymentMethod, subtotal]);
 
   const paidAmount = useMemo(
     () => resolvePaidAmount(partialEnabled, partialPaidInput, paymentMethod, total),
@@ -210,6 +257,72 @@ export function QuickSalePage() {
       source: "favorites",
     }));
   }, [favoriteIdSet, favorites, searchResults, searchTerm]);
+
+  function buildComboContextSignature(preview: ComboPreviewResponse): string {
+    if (preview.ambiguousGroups.length > 0) {
+      return preview.ambiguousGroups
+        .map((group) => {
+          const options = [...group.options]
+            .sort((left, right) => left.comboId - right.comboId)
+            .map((option) => `${option.comboId}`)
+            .join(",");
+          return `${group.signature}[${options}]`;
+        })
+        .join("|");
+    }
+    if (preview.matches.length <= 0) {
+      return "";
+    }
+    return preview.matches
+      .map((match) => `${match.comboId}`)
+      .sort()
+      .join("|");
+  }
+
+  function buildComboDecisionFromPreview(preview: ComboPreviewResponse): ComboDecisionState | null {
+    const signature = buildComboContextSignature(preview);
+    if (!signature) {
+      return null;
+    }
+    const namesFromMatches = preview.matches
+      .map((match) => `${match.comboName} x${formatInteger(match.applications)}`)
+      .join(", ");
+    const groups: ComboDecisionGroupState[] = preview.ambiguousGroups.map((group) => {
+      const selectedComboId = group.selectedComboId ?? group.suggestedComboId;
+      return {
+        signature: group.signature,
+        suggestedComboId: group.suggestedComboId,
+        selectedComboId,
+        options: group.options,
+      };
+    });
+    const comboNames =
+      namesFromMatches ||
+      groups
+        .map((group) => group.options.find((option) => option.comboId === group.selectedComboId)?.comboName ?? "")
+        .filter(Boolean)
+        .join(", ");
+
+    return {
+      signature,
+      comboNames: comboNames || "Combo disponible",
+      discountAmount: preview.comboDiscountTotal,
+      groups,
+    };
+  }
+
+  function selectedComboIdsFromDecision(decision: ComboDecisionState): number[] {
+    if (decision.groups.length <= 0) {
+      return [];
+    }
+    return Array.from(
+      new Set(
+        decision.groups
+          .map((group) => group.selectedComboId)
+          .filter((comboId) => Number.isFinite(comboId) && comboId > 0),
+      ),
+    );
+  }
 
   useEffect(() => {
     cartStateRef.current = cart;
@@ -310,6 +423,102 @@ export function QuickSalePage() {
   }, [lastSaleId]);
 
   useEffect(() => {
+    let active = true;
+
+    if (cart.length <= 0) {
+      setComboPreview(EMPTY_COMBO_PREVIEW);
+      setComboDiscountEnabled(false);
+      setSelectedComboIds([]);
+      setComboDecision(null);
+      comboDecisionSignatureRef.current = "";
+      return () => {
+        active = false;
+      };
+    }
+
+    if (paymentMethod === "Consumo interno") {
+      setComboPreview({
+        subtotalBeforeDiscount: subtotal,
+        comboDiscountTotal: 0,
+        totalAfterDiscount: subtotal,
+        matches: [],
+        ambiguousGroups: [],
+      });
+      setComboDiscountEnabled(false);
+      setSelectedComboIds([]);
+      setComboDecision(null);
+      comboDecisionSignatureRef.current = "";
+      return () => {
+        active = false;
+      };
+    }
+
+    const items = cart.map((item) => ({
+      productId: item.id,
+      quantity: item.qty,
+    }));
+
+    (async () => {
+      try {
+        const preview = await previewSaleCombos(
+          items,
+          comboDiscountEnabled && selectedComboIds.length > 0 ? selectedComboIds : undefined,
+        );
+        if (!active) {
+          return;
+        }
+        setComboPreview(preview);
+        const contextSignature = buildComboContextSignature(preview);
+
+        if (!contextSignature) {
+          comboDecisionSignatureRef.current = "";
+          setComboDecision(null);
+          if (comboDiscountEnabled) {
+            setComboDiscountEnabled(false);
+          }
+          if (selectedComboIds.length > 0) {
+            setSelectedComboIds([]);
+          }
+          return;
+        }
+
+        if (contextSignature !== comboDecisionSignatureRef.current) {
+          const nextDecision = buildComboDecisionFromPreview(preview);
+          if (nextDecision) {
+            setComboDecision(nextDecision);
+            if (comboDiscountEnabled) {
+              setComboDiscountEnabled(false);
+            }
+            if (selectedComboIds.length > 0) {
+              setSelectedComboIds([]);
+            }
+          }
+        }
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setComboPreview({
+          subtotalBeforeDiscount: subtotal,
+          comboDiscountTotal: 0,
+          totalAfterDiscount: subtotal,
+          matches: [],
+          ambiguousGroups: [],
+        });
+        setComboDecision(null);
+        setComboDiscountEnabled(false);
+        setSelectedComboIds([]);
+        comboDecisionSignatureRef.current = "";
+        setNotice({ tone: "error", text: toErrorMessage(error) });
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [cart, comboDiscountEnabled, paymentMethod, selectedComboIds, subtotal]);
+
+  useEffect(() => {
     if (!notice || notice.tone !== "error") {
       return;
     }
@@ -335,6 +544,51 @@ export function QuickSalePage() {
 
   function closeCriticalNotice() {
     setCriticalNotice(null);
+    focusScanner();
+  }
+
+  function handleComboOptionSelect(signature: string, comboId: number) {
+    setComboDecision((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        groups: current.groups.map((group) =>
+          group.signature === signature ? { ...group, selectedComboId: comboId } : group,
+        ),
+      };
+    });
+  }
+
+  function handleApplyComboDiscount() {
+    if (!comboDecision) {
+      return;
+    }
+    const nextSelectedIds = selectedComboIdsFromDecision(comboDecision);
+    comboDecisionSignatureRef.current = comboDecision.signature;
+    setSelectedComboIds(nextSelectedIds);
+    setComboDiscountEnabled(true);
+    setComboDecision(null);
+    setNotice({
+      tone: "ok",
+      text: `Descuento de combo aplicado (${comboDecision.comboNames}).`,
+    });
+    focusScanner();
+  }
+
+  function handleSkipComboDiscount() {
+    if (!comboDecision) {
+      return;
+    }
+    comboDecisionSignatureRef.current = comboDecision.signature;
+    setComboDiscountEnabled(false);
+    setSelectedComboIds([]);
+    setComboDecision(null);
+    setNotice({
+      tone: "info",
+      text: "Combo detectado, pero el descuento no se aplico.",
+    });
     focusScanner();
   }
 
@@ -421,6 +675,11 @@ export function QuickSalePage() {
     cartStateRef.current = [];
     setCart([]);
     setSelectedCartProductId(null);
+    setComboPreview(EMPTY_COMBO_PREVIEW);
+    setComboDiscountEnabled(false);
+    setSelectedComboIds([]);
+    setComboDecision(null);
+    comboDecisionSignatureRef.current = "";
     setNotice({ tone: "info", text: "Carrito limpiado." });
     focusScanner();
   }
@@ -579,6 +838,11 @@ export function QuickSalePage() {
         paidAmount,
         initialPaymentMethod: !isInternalConsumption ? paymentMethod : undefined,
         dueDate: !isInternalConsumption && debtAmount > 0 ? dueDateInput : undefined,
+        selectedComboIds:
+          !isInternalConsumption && comboDiscountEnabled && selectedComboIds.length > 0
+            ? selectedComboIds
+            : undefined,
+        applyComboDiscount: !isInternalConsumption ? comboDiscountEnabled : false,
       };
       const result = await createSale(payload);
       setLastSaleId(result.saleId);
@@ -588,13 +852,22 @@ export function QuickSalePage() {
           : "";
       const internalInfo =
         result.saleType === "internal" ? " Consumo interno registrado correctamente." : "";
+      const comboInfo =
+        result.comboDiscountTotal > 0
+          ? ` Descuento combos: ${formatMoney(result.comboDiscountTotal)}.`
+          : "";
       setNotice({
         tone: "ok",
-        text: `Venta #${result.saleId} guardada.${debtInfo}${internalInfo}`,
+        text: `Venta #${result.saleId} guardada.${debtInfo}${comboInfo}${internalInfo}`,
       });
       cartStateRef.current = [];
       setCart([]);
       setSelectedCartProductId(null);
+      setComboPreview(EMPTY_COMBO_PREVIEW);
+      setComboDiscountEnabled(false);
+      setSelectedComboIds([]);
+      setComboDecision(null);
+      comboDecisionSignatureRef.current = "";
       setPartialEnabled(false);
       setPartialPaidInput("0");
       setDueDateInput(defaultDueDateInput());
@@ -616,7 +889,17 @@ export function QuickSalePage() {
       setSubmitting(false);
       focusScanner();
     }
-  }, [cart, debtAmount, dueDateInput, paidAmount, paymentMethod, searchTerm, selectedCustomerId]);
+  }, [
+    cart,
+    comboDiscountEnabled,
+    debtAmount,
+    dueDateInput,
+    paidAmount,
+    paymentMethod,
+    searchTerm,
+    selectedComboIds,
+    selectedCustomerId,
+  ]);
 
   async function handleReprintLastTicket() {
     if (!lastSaleId) {
@@ -699,6 +982,16 @@ export function QuickSalePage() {
     function onGlobalKeyDown(event: globalThis.KeyboardEvent) {
       const key = event.key;
       const editableContext = isEditableTarget(event.target);
+      if (comboDecision) {
+        if (key === "Escape") {
+          event.preventDefault();
+          handleSkipComboDiscount();
+        } else if (key === "Enter") {
+          event.preventDefault();
+          handleApplyComboDiscount();
+        }
+        return;
+      }
       const forceShortcut =
         key === "Escape" ||
         key === "F2" ||
@@ -820,9 +1113,12 @@ export function QuickSalePage() {
   }, [
     addFirstQuickPick,
     cart,
+    comboDecision,
     customers,
     debtAmount,
+    handleApplyComboDiscount,
     handleCheckout,
+    handleSkipComboDiscount,
     partialEnabled,
     paymentMethod,
     paymentMethods,
@@ -838,6 +1134,15 @@ export function QuickSalePage() {
         title="Error operativo"
         message={criticalNotice?.text ?? ""}
         onClose={closeCriticalNotice}
+      />
+      <ComboDecisionPopup
+        open={Boolean(comboDecision)}
+        comboNames={comboDecision?.comboNames ?? ""}
+        discountAmount={comboDecision?.discountAmount ?? 0}
+        groups={comboDecision?.groups ?? []}
+        onSelectCombo={handleComboOptionSelect}
+        onApply={handleApplyComboDiscount}
+        onSkip={handleSkipComboDiscount}
       />
       <div className="view-grid sale-view-grid sale-view-simple">
       <section className="panel feature-panel sale-main-panel">
@@ -1014,6 +1319,22 @@ export function QuickSalePage() {
           <span>Total</span>
           <strong>{formatMoney(total)}</strong>
         </div>
+
+        {paymentMethod !== "Consumo interno" &&
+          comboDiscountEnabled &&
+          roundInteger(comboPreview.subtotalBeforeDiscount) === roundInteger(subtotal) &&
+          comboPreview.comboDiscountTotal > 0 && (
+          <div className="combo-summary-card">
+            <small>Subtotal lista: {formatMoney(comboPreview.subtotalBeforeDiscount)}</small>
+            <small>{`Descuento combos: -${formatMoney(comboPreview.comboDiscountTotal)}`}</small>
+            <small>Total final: {formatMoney(total)}</small>
+            <p>
+              {comboPreview.matches
+                .map((match) => `${match.comboName} x${formatInteger(match.applications)}`)
+                .join(" | ")}
+            </p>
+          </div>
+        )}
 
         <div className="checkout-inline-grid">
           <label className="field">

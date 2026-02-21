@@ -1,6 +1,6 @@
 [package]
 name = "venta_tauri"
-version = "1.0.11"
+version = "1.0.14"
 description = "BUEN TRAGO - Sistema de gestion para vinoteca"
 authors = ["Software Venta"]
 edition = "2021"
